@@ -72,7 +72,15 @@ fetch('/api/status')
 
 document.querySelectorAll('[data-preset]').forEach(btn => {
   btn.addEventListener('click', () => {
-    promptInput.value = presets[btn.dataset.preset] || promptInput.value;
+    const preset = presets[btn.dataset.preset];
+    if (!preset) {
+      message.className = 'message error';
+      message.textContent = `未找到“${btn.textContent.trim()}”的提示词，请刷新页面后重试。`;
+      return;
+    }
+    promptInput.value = preset;
+    message.className = 'message';
+    message.textContent = `已载入“${btn.textContent.trim()}”提示词。`;
   });
 });
 

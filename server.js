@@ -23,7 +23,10 @@ const upload = multer({
 
 app.use(express.static(path.join(__dirname, 'public'), {
   etag: true,
-  maxAge: '1h',
+  maxAge: 0,
+  setHeaders: (res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  },
 }));
 
 function readEnvFile() {
