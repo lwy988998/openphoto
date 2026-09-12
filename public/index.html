@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Openphtot AI 调色试用版</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">GPT Image Editing · AI Color Grading</p>
+        <h1>Openphtot AI 调色试用版</h1>
+        <p class="subtitle">上传原图，输入调色提示词，让 GPT 图像编辑模型输出电影感、胶片感、卡片机或 Smart HDR 风格。</p>
+      </div>
+      <div class="status" id="status">检查服务中...</div>
+    </section>
+
+    <section class="grid">
+      <form id="editForm" class="panel controls">
+        <label class="drop" for="imageInput">
+          <input id="imageInput" name="image" type="file" accept="image/png,image/jpeg,image/webp" required />
+          <span class="dropTitle">点击上传图片</span>
+          <span class="dropHint">PNG / JPG / WEBP，建议先用 1024px 左右测试</span>
+        </label>
+
+        <div class="row">
+          <label>模型
+            <select id="model" name="model">
+              <option value="gpt-image-2.5-sunburst" selected>gpt-image-2.5-sunburst（最强编辑/调色）</option>
+              <option value="gpt-image-2.5-flare">gpt-image-2.5-flare（更快）</option>
+              <option value="gpt-image-2">gpt-image-2（稳定备选）</option>
+              <option value="gpt-image-1.5">gpt-image-1.5</option>
+              <option value="gpt-image-1">gpt-image-1</option>
+              <option value="gpt-image-1-mini">gpt-image-1-mini（便宜）</option>
+            </select>
+          </label>
+          <label>质量
+            <select id="quality" name="quality">
+              <option value="auto" selected>auto</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="xhigh">xhigh</option>
+              <option value="max">max</option>
+              <option value="low">low</option>
+            </select>
+          </label>
+          <label>尺寸
+            <select id="size" name="size">
+              <option value="auto" selected>auto</option>
+              <option value="1024x1024">1024x1024</option>
+              <option value="1024x1536">1024x1536</option>
+              <option value="1536x1024">1536x1024</option>
+            </select>
+          </label>
+        </div>
+
+        <label>调色提示词
+          <textarea id="prompt" name="prompt" rows="12"></textarea>
+        </label>
+
+        <div class="presets">
+          <button type="button" data-preset="cinema">电影绿金</button>
+          <button type="button" data-preset="sparkle">阳光闪耀</button>
+          <button type="button" data-preset="hdr">Smart HDR</button>
+          <button type="button" data-preset="portra">Portra 胶片</button>
+          <button type="button" data-preset="digicam">卡片机</button>
+        </div>
+
+        <details class="advanced">
+          <summary>高级：临时 API Key</summary>
+          <p>推荐在服务器配置 Key；如果只是临时试用，可输入短期 OpenAI API Key。本页面当前是 HTTP，长期 Key 不建议在这里输入。</p>
+          <input id="temporaryApiKey" name="temporaryApiKey" type="password" autocomplete="off" placeholder="sk-...（仅本次请求使用，不保存）" />
+        </details>
+
+        <button class="submit" type="submit">开始 AI 调色</button>
+        <p id="message" class="message"></p>
+      </form>
+
+      <section class="panel preview">
+        <div class="compare">
+          <div>
+            <h2>原图</h2>
+            <img id="originalPreview" alt="原图预览" />
+          </div>
+          <div>
+            <h2>调色结果</h2>
+            <img id="resultPreview" alt="调色结果" />
+          </div>
+        </div>
+        <div class="actions">
+          <a id="downloadLink" class="download" download="openphtot-ai-color.png">下载结果</a>
+        </div>
+        <pre id="debug" class="debug"></pre>
+      </section>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
