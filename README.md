@@ -7,6 +7,7 @@
 - 上传 PNG / JPG / WEBP 原图
 - 输入中文调色提示词
 - 内置电影感、阳光闪耀、Smart HDR、Portra 胶片、卡片机预设
+- 可选“画质提升到 8K”：GPT 调色完成后，服务端把结果最长边放大到 7680px 并锐化
 - 服务端代理 API Key，不暴露到前端
 - 支持自定义 OpenAI 兼容端点，例如 `https://bya.re/v1`
 

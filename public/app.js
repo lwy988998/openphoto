@@ -88,7 +88,10 @@ imageInput.addEventListener('change', () => {
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   message.className = 'message';
-  message.textContent = '正在上传并调用 GPT 图像编辑模型，可能需要 30–180 秒...';
+  const wants8K = Boolean(document.querySelector('#upscale8k')?.checked);
+  message.textContent = wants8K
+    ? '正在调用 GPT 图像编辑模型，并在完成后提升到 8K，可能需要 1–4 分钟...'
+    : '正在上传并调用 GPT 图像编辑模型，可能需要 30–180 秒...';
   resultPreview.classList.add('loading');
   download.classList.remove('ready');
   debug.textContent = '';
@@ -103,9 +106,15 @@ form.addEventListener('submit', async (event) => {
 
     resultPreview.src = data.image;
     download.href = data.image;
+    download.download = data.upscale?.upscaled ? 'openphtot-ai-color-8k.jpg' : `openphtot-ai-color.${data.outputFormat || 'png'}`;
     download.classList.add('ready');
-    message.textContent = '调色完成，可以预览和下载结果。';
-    debug.textContent = data.usage ? `模型：${data.model}\nToken 用量：${JSON.stringify(data.usage, null, 2)}` : `模型：${data.model}`;
+    message.textContent = data.upscale?.upscaled ? '调色完成，已提升到 8K，可以预览和下载结果。' : '调色完成，可以预览和下载结果。';
+    const upscaleLine = data.upscale
+      ? `\n8K 提升：${data.upscale.upscaled ? '已启用' : '未放大'} (${data.upscale.originalWidth}×${data.upscale.originalHeight} → ${data.upscale.width}×${data.upscale.height})`
+      : `\n8K 提升：未启用`;
+    debug.textContent = data.usage
+      ? `模型：${data.model}${upscaleLine}\nToken 用量：${JSON.stringify(data.usage, null, 2)}`
+      : `模型：${data.model}${upscaleLine}`;
   } catch (err) {
     message.className = 'message error';
     message.textContent = err.message || '调色失败';

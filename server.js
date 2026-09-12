@@ -1,5 +1,6 @@
 import express from 'express';
 import multer from 'multer';
+import sharp from 'sharp';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +10,8 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = Number(process.env.PORT || 39006);
+sharp.cache(false);
+sharp.concurrency(1);
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 },
@@ -70,6 +73,48 @@ function buildPrompt(userPrompt) {
   ].join('\n');
 }
 
+async function upscaleTo8K(dataUrl, outputFormat) {
+  const match = dataUrl.match(/^data:image\/[a-z0-9.+-]+;base64,(.+)$/i);
+  if (!match) return { image: dataUrl, metadata: null };
+
+  const input = Buffer.from(match[1], 'base64');
+  const meta = await sharp(input).metadata();
+  const width = meta.width || 0;
+  const height = meta.height || 0;
+  if (!width || !height) return { image: dataUrl, metadata: null };
+
+  const targetLongEdge = 7680;
+  const scale = targetLongEdge / Math.max(width, height);
+  if (scale <= 1) {
+    return { image: dataUrl, metadata: { originalWidth: width, originalHeight: height, width, height, upscaled: false } };
+  }
+
+  const targetWidth = Math.round(width * scale);
+  const targetHeight = Math.round(height * scale);
+  let pipeline = sharp(input)
+    .resize(targetWidth, targetHeight, {
+      kernel: sharp.kernel.lanczos3,
+      fit: 'fill',
+      withoutEnlargement: false,
+    })
+    .sharpen({ sigma: 0.8, m1: 0.6, m2: 1.2, x1: 2, y2: 10, y3: 20 });
+
+  if (outputFormat === 'jpeg' || outputFormat === 'jpg') {
+    pipeline = pipeline.jpeg({ quality: 94, mozjpeg: true });
+  } else if (outputFormat === 'webp') {
+    pipeline = pipeline.webp({ quality: 94 });
+  } else {
+    pipeline = pipeline.png({ compressionLevel: 7 });
+  }
+
+  const output = await pipeline.toBuffer();
+  const mime = outputFormat === 'jpg' ? 'jpeg' : outputFormat;
+  return {
+    image: `data:image/${mime};base64,${output.toString('base64')}`,
+    metadata: { originalWidth: width, originalHeight: height, width: targetWidth, height: targetHeight, upscaled: true },
+  };
+}
+
 app.post('/api/edit', upload.single('image'), async (req, res) => {
   try {
     const fallbackKey = configuredKey();
@@ -83,9 +128,11 @@ app.post('/api/edit', upload.single('image'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: '请上传一张图片。' });
 
     const model = String(req.body.model || 'gpt-image-2.5-sunburst').trim();
+    const upscale8k = String(req.body.upscale8k || '') === 'on' || String(req.body.upscale8k || '') === 'true';
     const quality = String(req.body.quality || 'auto').trim();
     const size = String(req.body.size || 'auto').trim();
-    const outputFormat = String(req.body.outputFormat || 'png').trim();
+    const requestOutputFormat = String(req.body.outputFormat || 'png').trim();
+    const responseOutputFormat = upscale8k ? 'jpeg' : requestOutputFormat;
     const prompt = buildPrompt(String(req.body.prompt || ''));
 
     const form = new FormData();
@@ -95,7 +142,7 @@ app.post('/api/edit', upload.single('image'), async (req, res) => {
     form.append('n', '1');
     form.append('size', size);
     form.append('quality', quality);
-    form.append('output_format', outputFormat);
+    form.append('output_format', requestOutputFormat);
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 240000);
@@ -120,10 +167,18 @@ app.post('/api/edit', upload.single('image'), async (req, res) => {
       return res.status(502).json({ error: 'OpenAI 返回中没有图片数据。', raw: data });
     }
 
+    const editedImage = image.b64_json ? `data:image/${requestOutputFormat};base64,${image.b64_json}` : image.url;
+    const upscaled = upscale8k && editedImage.startsWith('data:image/')
+      ? await upscaleTo8K(editedImage, responseOutputFormat)
+      : { image: editedImage, metadata: null };
+
     res.json({
-      image: image.b64_json ? `data:image/${outputFormat};base64,${image.b64_json}` : image.url,
-      outputFormat,
+      image: upscaled.image,
+      outputFormat: responseOutputFormat,
+      sourceOutputFormat: requestOutputFormat,
       model,
+      upscale8k,
+      upscale: upscaled.metadata,
       usage: data.usage || null,
       revisedPrompt: image.revised_prompt || null,
     });
