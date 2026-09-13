@@ -51,11 +51,16 @@
           </div>
         </div>
 
+        <label class="accessField">访问密码
+          <input id="accessPassword" name="accessPassword" type="password" value="" placeholder="请输入访问密码" autocomplete="current-password" required />
+        </label>
+
         <label class="drop liquidDrop" for="imageInput">
-          <input id="imageInput" name="image" type="file" accept="image/png,image/jpeg,image/webp" required />
+          <input id="imageInput" name="images" type="file" accept="image/png,image/jpeg,image/webp" multiple required />
           <span class="dropIcon">↥</span>
           <span class="dropTitle">上传原始照片</span>
-          <span class="dropHint">PNG / JPG / WEBP · 建议先用 1024px 左右测试</span>
+          <span class="dropHint">可一次选择最多 10 张 · PNG / JPG / WEBP</span>
+          <span class="selectedFiles" id="selectedFiles">尚未选择照片</span>
         </label>
 
         <div class="row">
@@ -165,12 +170,14 @@
           </div>
         </div>
         <div class="actions">
-          <a id="downloadLink" class="download liquidDownload" download="openphtot-ai-color.png">下载结果</a>
+          <a id="downloadLink" class="download liquidDownload" download="openphtot-ai-color.png">下载当前结果</a>
+          <button id="downloadAll" class="download liquidDownload" type="button">下载全部结果</button>
         </div>
+        <div id="batchResults" class="batchResults"></div>
         <pre id="debug" class="debug"></pre>
       </section>
     </section>
   </main>
-  <script src="/app.js?v=20260912-wordmark"></script>
+  <script src="/app.js?v=20260912-batch-password"></script>
 </body>
 </html>

@@ -10,6 +10,8 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = Number(process.env.PORT || 39006);
+const jobs = new Map();
+const accessPassword = process.env.OPENPHOTO_ACCESS_PASSWORD || readEnvFile().OPENPHOTO_ACCESS_PASSWORD || '123451';
 sharp.cache(false);
 sharp.concurrency(1);
 const upload = multer({
@@ -28,6 +30,19 @@ app.use(express.static(path.join(__dirname, 'public'), {
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   },
 }));
+
+function isAuthorized(req) {
+  return req.headers['x-openphoto-password'] === accessPassword || req.query.password === accessPassword;
+}
+
+function requireAccess(req, res, next) {
+  if (isAuthorized(req)) return next();
+  res.status(401).json({ error: '需要访问密码。' });
+}
+
+app.get('/api/access', (req, res) => {
+  res.json({ authorized: isAuthorized(req) });
+});
 
 function readEnvFile() {
   const file = process.env.OPENPHOTO_ENV_FILE || '/etc/openphtot-ai-color/openai.env';
@@ -118,77 +133,81 @@ async function upscaleTo8K(dataUrl, outputFormat) {
   };
 }
 
-app.post('/api/edit', upload.single('image'), async (req, res) => {
+async function editOne(file, options) {
+  const { apiKey, model, upscale8k, quality, size, requestOutputFormat, prompt } = options;
+  const responseOutputFormat = upscale8k ? 'jpeg' : requestOutputFormat;
+  const form = new FormData();
+  form.append('model', model);
+  form.append('prompt', prompt);
+  form.append('image', new Blob([file.buffer], { type: file.mimetype || 'image/png' }), file.originalname || 'input.png');
+  form.append('n', '1');
+  form.append('size', size);
+  form.append('quality', quality);
+  form.append('output_format', requestOutputFormat);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 115000);
+  const response = await fetch(`${configuredBaseUrl()}/images/edits`, {
+    method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form, signal: controller.signal,
+  }).finally(() => clearTimeout(timer));
+  const text = await response.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = { raw: text }; }
+  if (!response.ok) throw new Error(data?.error?.message || data?.raw || `上游请求失败：HTTP ${response.status}`);
+  const image = data?.data?.[0];
+  if (!image?.b64_json && !image?.url) throw new Error('上游没有返回图片。');
+  const editedImage = image.b64_json ? `data:image/${requestOutputFormat};base64,${image.b64_json}` : image.url;
+  const upscaled = upscale8k && editedImage.startsWith('data:image/') ? await upscaleTo8K(editedImage, responseOutputFormat) : { image: editedImage, metadata: null };
+  return { image: upscaled.image, outputFormat: responseOutputFormat, upscale: upscaled.metadata, usage: data.usage || null };
+}
+
+function safeJob(job) {
+  return { id: job.id, status: job.status, total: job.items.length, completed: job.items.filter(x => x.status === 'completed').length, failed: job.items.filter(x => x.status === 'failed').length, items: job.items.map(({ file, ...item }) => item) };
+}
+
+async function runJob(job, options) {
+  for (const item of job.items) {
+    if (job.status === 'cancelled') break;
+    item.status = 'processing';
+    try { item.result = await editOne(item.file, options); item.status = 'completed'; }
+    catch (err) { item.status = 'failed'; item.error = err?.name === 'AbortError' ? '上游处理超过 115 秒，请稍后重试。' : (err.message || '处理失败'); }
+    item.file = null;
+  }
+  if (job.status !== 'cancelled') job.status = job.items.some(x => x.status === 'failed') ? 'completed_with_errors' : 'completed';
+}
+
+app.post('/api/batch', requireAccess, upload.array('images', 10), async (req, res) => {
   try {
     const fallbackKey = configuredKey();
-    const temporaryKey = String(req.body.temporaryApiKey || '').trim();
+    const body = req.body || {};
+    const temporaryKey = String(body.temporaryApiKey || '').trim();
     const apiKey = fallbackKey || temporaryKey;
     if (!apiKey) {
       return res.status(503).json({
         error: 'OPENAI_API_KEY 未配置。请先在服务器 /etc/openphtot-ai-color/openai.env 配置，或在页面高级选项中临时输入 API Key。',
       });
     }
-    if (!req.file) return res.status(400).json({ error: '请上传一张图片。' });
+    if (!req.files?.length) return res.status(400).json({ error: '请至少上传一张图片。' });
 
-    const model = String(req.body.model || 'gpt-image-2.5-sunburst').trim();
-    const upscale8k = String(req.body.upscale8k || '') === 'on' || String(req.body.upscale8k || '') === 'true';
-    const quality = String(req.body.quality || 'auto').trim();
-    const size = String(req.body.size || 'auto').trim();
-    const requestOutputFormat = String(req.body.outputFormat || 'png').trim();
-    const responseOutputFormat = upscale8k ? 'jpeg' : requestOutputFormat;
-    const prompt = buildPrompt(String(req.body.prompt || ''));
-
-    const form = new FormData();
-    form.append('model', model);
-    form.append('prompt', prompt);
-    form.append('image', new Blob([req.file.buffer], { type: req.file.mimetype || 'image/png' }), req.file.originalname || 'input.png');
-    form.append('n', '1');
-    form.append('size', size);
-    form.append('quality', quality);
-    form.append('output_format', requestOutputFormat);
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 240000);
-    const response = await fetch(`${configuredBaseUrl()}/images/edits`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: form,
-      signal: controller.signal,
-    }).finally(() => clearTimeout(timer));
-
-    const text = await response.text();
-    let data;
-    try { data = JSON.parse(text); } catch { data = { raw: text }; }
-
-    if (!response.ok) {
-      const message = data?.error?.message || data?.raw || `OpenAI 请求失败：HTTP ${response.status}`;
-      return res.status(response.status).json({ error: message, status: response.status });
-    }
-
-    const image = data?.data?.[0];
-    if (!image?.b64_json && !image?.url) {
-      return res.status(502).json({ error: 'OpenAI 返回中没有图片数据。', raw: data });
-    }
-
-    const editedImage = image.b64_json ? `data:image/${requestOutputFormat};base64,${image.b64_json}` : image.url;
-    const upscaled = upscale8k && editedImage.startsWith('data:image/')
-      ? await upscaleTo8K(editedImage, responseOutputFormat)
-      : { image: editedImage, metadata: null };
-
-    res.json({
-      image: upscaled.image,
-      outputFormat: responseOutputFormat,
-      sourceOutputFormat: requestOutputFormat,
-      model,
-      upscale8k,
-      upscale: upscaled.metadata,
-      usage: data.usage || null,
-      revisedPrompt: image.revised_prompt || null,
-    });
+    const model = String(body.model || 'gpt-image-2.5-sunburst').trim();
+    const upscale8k = String(body.upscale8k || '') === 'on' || String(body.upscale8k || '') === 'true';
+    const quality = String(body.quality || 'auto').trim();
+    const size = String(body.size || 'auto').trim();
+    const requestOutputFormat = String(body.outputFormat || 'png').trim();
+    const prompt = buildPrompt(String(body.prompt || ''));
+    const job = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, status: 'queued', items: req.files.map((file, index) => ({ index, name: file.originalname, status: 'queued', file })) };
+    jobs.set(job.id, job);
+    runJob(job, { apiKey, model, upscale8k, quality, size, requestOutputFormat, prompt });
+    res.status(202).json({ job: safeJob(job) });
   } catch (err) {
-    const message = err?.name === 'AbortError' ? '请求超时：图像编辑可能超过 240 秒。请降低质量或图片尺寸后重试。' : (err?.message || '服务器处理失败');
-    res.status(500).json({ error: message });
+    res.status(500).json({ error: err?.message || '服务器处理失败' });
   }
+});
+
+app.get('/api/batch/:id', requireAccess, (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: '任务不存在或已过期。' });
+  res.json({ job: safeJob(job) });
 });
 
 app.use((err, _req, res, _next) => {

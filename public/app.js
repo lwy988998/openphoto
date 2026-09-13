@@ -49,13 +49,18 @@ const presets = {
 
 const form = document.querySelector('#editForm');
 const imageInput = document.querySelector('#imageInput');
+const selectedFiles = document.querySelector('#selectedFiles');
 const originalPreview = document.querySelector('#originalPreview');
 const resultPreview = document.querySelector('#resultPreview');
 const promptInput = document.querySelector('#prompt');
 const message = document.querySelector('#message');
 const statusEl = document.querySelector('#status');
 const download = document.querySelector('#downloadLink');
+const downloadAll = document.querySelector('#downloadAll');
+const batchResults = document.querySelector('#batchResults');
 const debug = document.querySelector('#debug');
+let activeJob = null;
+let latestItems = [];
 
 promptInput.value = presets.cinema;
 
@@ -85,44 +90,52 @@ document.querySelectorAll('[data-preset]').forEach(btn => {
 });
 
 imageInput.addEventListener('change', () => {
-  const file = imageInput.files?.[0];
+  const files = [...(imageInput.files || [])].slice(0, 10);
+  if (imageInput.files.length > 10) message.textContent = '最多处理 10 张照片，已自动取前 10 张。';
+  selectedFiles.textContent = files.length ? `已选择 ${files.length} 张照片：${files.map(file => file.name).join('、')}` : '尚未选择照片';
+  const file = files[0];
   if (!file) return;
   originalPreview.src = URL.createObjectURL(file);
   resultPreview.removeAttribute('src');
   download.classList.remove('ready');
   debug.textContent = '';
+  batchResults.innerHTML = '';
 });
 
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   message.className = 'message';
+  const files = [...(imageInput.files || [])].slice(0, 10);
+  const password = document.querySelector('#accessPassword').value.trim();
+  if (!password) { message.className = 'message error'; message.textContent = '请输入访问密码。'; return; }
+  if (!files.length) { message.className = 'message error'; message.textContent = '请至少选择一张照片。'; return; }
   const wants8K = Boolean(document.querySelector('#upscale8k')?.checked);
   message.textContent = wants8K
     ? '正在调用 GPT 图像编辑模型，并在完成后提升到 8K，可能需要 1–4 分钟...'
     : '正在上传并调用 GPT 图像编辑模型，可能需要 30–180 秒...';
   resultPreview.classList.add('loading');
   download.classList.remove('ready');
+  downloadAll.classList.remove('ready');
   debug.textContent = '';
+  batchResults.innerHTML = '';
   const submit = form.querySelector('.submit');
   submit.disabled = true;
 
   try {
-    const body = new FormData(form);
-    const response = await fetch('/api/edit', { method: 'POST', body });
+    const body = new FormData();
+    files.forEach(file => body.append('images', file, file.name));
+    body.append('model', document.querySelector('#model').value);
+    body.append('quality', document.querySelector('#quality').value);
+    body.append('size', document.querySelector('#size').value);
+    body.append('prompt', promptInput.value);
+    body.append('upscale8k', wants8K ? 'on' : '');
+    body.append('temporaryApiKey', document.querySelector('#temporaryApiKey').value);
+    const headers = { 'x-openphoto-password': password };
+    const response = await fetch('/api/batch', { method: 'POST', body, headers });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || `请求失败：HTTP ${response.status}`);
-
-    resultPreview.src = data.image;
-    download.href = data.image;
-    download.download = data.upscale?.upscaled ? 'openphtot-ai-color-8k.jpg' : `openphtot-ai-color.${data.outputFormat || 'png'}`;
-    download.classList.add('ready');
-    message.textContent = data.upscale?.upscaled ? '调色完成，已提升到 8K，可以预览和下载结果。' : '调色完成，可以预览和下载结果。';
-    const upscaleLine = data.upscale
-      ? `\n8K 提升：${data.upscale.upscaled ? '已启用' : '未放大'} (${data.upscale.originalWidth}×${data.upscale.originalHeight} → ${data.upscale.width}×${data.upscale.height})`
-      : `\n8K 提升：未启用`;
-    debug.textContent = data.usage
-      ? `模型：${data.model}${upscaleLine}\nToken 用量：${JSON.stringify(data.usage, null, 2)}`
-      : `模型：${data.model}${upscaleLine}`;
+    activeJob = data.job.id;
+    await pollBatch(activeJob, password);
   } catch (err) {
     message.className = 'message error';
     message.textContent = err.message || '调色失败';
@@ -130,4 +143,44 @@ form.addEventListener('submit', async (event) => {
     resultPreview.classList.remove('loading');
     submit.disabled = false;
   }
+});
+
+async function pollBatch(jobId, password) {
+  const response = await fetch(`/api/batch/${encodeURIComponent(jobId)}`, { headers: { 'x-openphoto-password': password }, cache: 'no-store' });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || `任务查询失败：HTTP ${response.status}`);
+  const job = data.job;
+  latestItems = job.items;
+  batchResults.innerHTML = job.items.map(item => {
+    const status = item.status === 'completed' ? '已完成' : item.status === 'failed' ? `失败：${item.error || '未知错误'}` : item.status === 'processing' ? '处理中…' : '排队中';
+    return `<div class="batchItem"><span>${escapeHtml(item.name)}</span><b class="batchStatus ${item.status}">${status}</b></div>`;
+  }).join('');
+  message.textContent = `批量处理中：${job.completed} / ${job.total} 已完成${job.failed ? `，${job.failed} 张失败` : ''}`;
+  const first = job.items.find(item => item.status === 'completed' && item.result);
+  if (first) {
+    resultPreview.src = first.result.image;
+    download.href = first.result.image;
+    download.download = first.result.upscale?.upscaled ? 'openphtot-ai-color-8k.jpg' : `openphtot-ai-color.${first.result.outputFormat || 'png'}`;
+    download.classList.add('ready');
+  }
+  if (job.status === 'queued' || job.status === 'processing') {
+    await new Promise(resolve => setTimeout(resolve, 1800));
+    return pollBatch(jobId, password);
+  }
+  if (job.completed > 0) downloadAll.classList.add('ready');
+  message.textContent = job.status === 'completed' ? `批量调色完成：${job.completed} / ${job.total} 张。` : `批量处理结束：完成 ${job.completed} 张，失败 ${job.failed} 张。`;
+  debug.textContent = '每张图片按顺序处理，失败图片不会影响其他结果。';
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+}
+
+downloadAll.addEventListener('click', () => {
+  latestItems.filter(item => item.status === 'completed' && item.result?.image).forEach((item, index) => {
+    const link = document.createElement('a');
+    link.href = item.result.image;
+    link.download = `openphtot-${String(index + 1).padStart(2, '0')}-${item.name.replace(/[^\w.-]+/g, '_')}`;
+    link.click();
+  });
 });
