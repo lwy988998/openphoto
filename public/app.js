@@ -160,7 +160,7 @@ async function pollBatch(jobId, password) {
   if (first) {
     resultPreview.src = first.result.image;
     download.href = first.result.image;
-    download.download = first.result.upscale?.upscaled ? 'openphtot-ai-color-8k.jpg' : `openphtot-ai-color.${first.result.outputFormat || 'png'}`;
+    download.download = first.result.upscale?.upscaled ? 'openphoto-ai-color-8k.jpg' : `openphoto-ai-color.${first.result.outputFormat || 'png'}`;
     download.classList.add('ready');
   }
   if (job.status === 'queued' || job.status === 'processing') {
@@ -180,7 +180,7 @@ downloadAll.addEventListener('click', () => {
   latestItems.filter(item => item.status === 'completed' && item.result?.image).forEach((item, index) => {
     const link = document.createElement('a');
     link.href = item.result.image;
-    link.download = `openphtot-${String(index + 1).padStart(2, '0')}-${item.name.replace(/[^\w.-]+/g, '_')}`;
+    link.download = `openphoto-${String(index + 1).padStart(2, '0')}-${item.name.replace(/[^\w.-]+/g, '_')}`;
     link.click();
   });
 });

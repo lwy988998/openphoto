@@ -11,7 +11,13 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = Number(process.env.PORT || 39006);
 const jobs = new Map();
-const accessPassword = process.env.OPENPHOTO_ACCESS_PASSWORD || readEnvFile().OPENPHOTO_ACCESS_PASSWORD || '123451';
+const accessPassword = (process.env.OPENPHOTO_ACCESS_PASSWORD || readEnvFile().OPENPHOTO_ACCESS_PASSWORD || '').trim();
+const jobTtlMs = 30 * 60 * 1000;
+const allowedModels = new Set(['gpt-image-2.5-sunburst', 'gpt-image-2.5-flare', 'gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini']);
+const allowedQuality = new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max']);
+const allowedSizes = new Set(['auto', '1024x1024', '1024x1536', '1536x1024']);
+const allowedOutputFormats = new Set(['png', 'jpeg', 'jpg', 'webp']);
+if (!accessPassword) throw new Error('必须配置 OPENPHOTO_ACCESS_PASSWORD。');
 sharp.cache(false);
 sharp.concurrency(1);
 const upload = multer({
@@ -45,7 +51,7 @@ app.get('/api/access', (req, res) => {
 });
 
 function readEnvFile() {
-  const file = process.env.OPENPHOTO_ENV_FILE || '/etc/openphtot-ai-color/openai.env';
+  const file = process.env.OPENPHOTO_ENV_FILE || '/etc/openphoto-ai-color/openai.env';
   try {
     const text = fs.readFileSync(file, 'utf8');
     return Object.fromEntries(
@@ -72,7 +78,7 @@ function configuredBaseUrl() {
 app.get('/api/status', (_req, res) => {
   res.json({
     ok: true,
-    app: 'openphtot-ai-color',
+    app: 'openphoto-ai-color',
     port,
     hasOpenAIKey: Boolean(configuredKey()),
     baseUrl: configuredBaseUrl(),
@@ -174,6 +180,7 @@ async function runJob(job, options) {
     item.file = null;
   }
   if (job.status !== 'cancelled') job.status = job.items.some(x => x.status === 'failed') ? 'completed_with_errors' : 'completed';
+  setTimeout(() => jobs.delete(job.id), jobTtlMs).unref();
 }
 
 app.post('/api/batch', requireAccess, upload.array('images', 10), async (req, res) => {
@@ -184,20 +191,36 @@ app.post('/api/batch', requireAccess, upload.array('images', 10), async (req, re
     const apiKey = fallbackKey || temporaryKey;
     if (!apiKey) {
       return res.status(503).json({
-        error: 'OPENAI_API_KEY 未配置。请先在服务器 /etc/openphtot-ai-color/openai.env 配置，或在页面高级选项中临时输入 API Key。',
+        error: 'OPENAI_API_KEY 未配置。请先在服务器 /etc/openphoto-ai-color/openai.env 配置，或在页面高级选项中临时输入 API Key。',
       });
     }
     if (!req.files?.length) return res.status(400).json({ error: '请至少上传一张图片。' });
+    if (jobs.size >= 20) return res.status(429).json({ error: '当前任务较多，请稍后重试。' });
 
     const model = String(body.model || 'gpt-image-2.5-sunburst').trim();
     const upscale8k = String(body.upscale8k || '') === 'on' || String(body.upscale8k || '') === 'true';
     const quality = String(body.quality || 'auto').trim();
     const size = String(body.size || 'auto').trim();
     const requestOutputFormat = String(body.outputFormat || 'png').trim();
-    const prompt = buildPrompt(String(body.prompt || ''));
+    const userPrompt = String(body.prompt || '').trim();
+    if (!allowedModels.has(model) || !allowedQuality.has(quality) || !allowedSizes.has(size) || !allowedOutputFormats.has(requestOutputFormat)) {
+      return res.status(400).json({ error: '模型、质量、尺寸或输出格式参数无效。' });
+    }
+    if (userPrompt.length > 4000) return res.status(400).json({ error: '调色提示词不能超过 4000 个字符。' });
+    const prompt = buildPrompt(userPrompt);
     const job = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, status: 'queued', items: req.files.map((file, index) => ({ index, name: file.originalname, status: 'queued', file })) };
     jobs.set(job.id, job);
-    runJob(job, { apiKey, model, upscale8k, quality, size, requestOutputFormat, prompt });
+    runJob(job, { apiKey, model, upscale8k, quality, size, requestOutputFormat, prompt }).catch((err) => {
+      job.status = 'completed_with_errors';
+      for (const item of job.items) {
+        if (item.status === 'queued' || item.status === 'processing') {
+          item.status = 'failed';
+          item.error = err?.message || '后台任务失败';
+          item.file = null;
+        }
+      }
+      setTimeout(() => jobs.delete(job.id), jobTtlMs).unref();
+    });
     res.status(202).json({ job: safeJob(job) });
   } catch (err) {
     res.status(500).json({ error: err?.message || '服务器处理失败' });
@@ -215,7 +238,7 @@ app.use((err, _req, res, _next) => {
 });
 
 const server = app.listen(port, '0.0.0.0', () => {
-  console.log(`Openphtot AI Color listening on 0.0.0.0:${port}`);
+  console.log(`Openphoto AI Color listening on 0.0.0.0:${port}`);
 });
 server.requestTimeout = 300000;
 server.headersTimeout = 310000;

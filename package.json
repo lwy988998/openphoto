@@ -1,1 +1,1 @@
-{"scripts":{"start":"node server.js"},"dependencies":{"express":"^4.21.2","multer":"^2.0.2","sharp":"^0.35.4"},"engines":{"node":">=18"},"name":"openphtot-ai-color","version":"0.1.0","private":true,"type":"module"}
+{"scripts":{"start":"node server.js","test":"node test/smoke.mjs"},"dependencies":{"express":"^4.21.2","multer":"^2.0.2","sharp":"^0.35.4"},"engines":{"node":">=18"},"name":"openphoto-ai-color","version":"0.1.0","private":true,"type":"module"}

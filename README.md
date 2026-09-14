@@ -1,4 +1,4 @@
-# Openphtot AI Color
+# Openphoto AI Color
 
 个人试用版 GPT 图像编辑调色 Web 应用：上传原图，输入调色提示词，后端调用 OpenAI 兼容 Images Edit API。
 
@@ -28,13 +28,13 @@ npm start
 推荐把密钥放到服务器环境文件中，不要提交到 GitHub：
 
 ```bash
-mkdir -p /etc/openphtot-ai-color
-cat > /etc/openphtot-ai-color/openai.env <<'EOF'
+mkdir -p /etc/openphoto-ai-color
+cat > /etc/openphoto-ai-color/openai.env <<'EOF'
 OPENAI_BASE_URL=https://bya.re/v1
 OPENAI_API_KEY=你的_API_Key
 EOF
-chmod 600 /etc/openphtot-ai-color/openai.env
-systemctl restart openphtot-ai-color
+chmod 600 /etc/openphoto-ai-color/openai.env
+systemctl restart openphoto-ai-color
 ```
 
 ## API
@@ -56,7 +56,7 @@ systemctl restart openphtot-ai-color
 批量接口需要请求头：
 
 ```text
-x-openphoto-password: 123451
+x-openphoto-password: 你的访问密码
 ```
 
 ## 注意

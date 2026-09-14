@@ -233,7 +233,7 @@ button { appearance: none; }
 .wordmark::before {
   position: absolute;
   inset: 0;
-  content: "Openphtot";
+  content: "Openphoto";
   color: transparent;
   opacity: .5;
   filter: blur(.2px);
