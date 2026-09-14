@@ -59,6 +59,7 @@ const message = document.querySelector('#message');
 const statusEl = document.querySelector('#status');
 const photoGrid = document.querySelector('#photoGrid');
 const submitButton = form.querySelector('.submitButton');
+const resetDialog = document.querySelector('#resetDialog');
 const presetLabels = Object.fromEntries([...document.querySelectorAll('[data-preset]')].map(button => [button.dataset.preset, button.textContent.trim()]));
 let records = [];
 let jobs = loadJson(JOBS_KEY, {});
@@ -159,7 +160,7 @@ function renderCards() {
     const result = outputUrl
       ? `<img src="${escapeHtml(outputUrl)}" alt="${escapeHtml(record.name)} 的处理结果">`
       : `<div class="resultPlaceholder ${record.status === 'processing' || record.status === 'queued' ? 'processing' : ''}">${record.error ? escapeHtml(record.error) : statusText(record.status)}</div>`;
-    return `<article class="photoCard glass" data-image-id="${record.imageId}">
+    return `<article class="photoCard glass ${record.status}" data-image-id="${record.imageId}">
       <header class="cardHeader"><strong title="${escapeHtml(record.name)}">${escapeHtml(record.name)}</strong><span class="cardStatus ${record.status}">${statusText(record.status)}</span></header>
       <div class="imageStack">
         <div class="imagePane"><span class="imageLabel">原图</span><img src="${sourceUrl}" alt="${escapeHtml(record.name)} 原图"></div>
@@ -310,10 +311,10 @@ async function submitJob(targetRecords, prompt) {
   }
 }
 
-async function resetBatch(confirmFirst = true) {
-  if (confirmFirst && (records.length || Object.keys(jobs).length) && !window.confirm('新建批次会清除当前照片和结果，确定继续吗？')) return;
+async function resetBatch() {
   releaseObjectUrls();
-  await clearImages();
+  try { await clearImages(); }
+  catch (error) { console.error(error); }
   records = [];
   jobs = {};
   saveJobs();
@@ -324,8 +325,8 @@ async function resetBatch(confirmFirst = true) {
 
 imageInput.addEventListener('change', async () => {
   const files = [...imageInput.files].filter(file => /^image\/(png|jpe?g|webp)$/i.test(file.type)).slice(0, 10);
-  if (!files.length) return;
-  await resetBatch(false);
+  if (!files.length) return setMessage('没有读取到支持的照片，请选择 PNG、JPG 或 WEBP。', true);
+  await resetBatch();
   records = files.map((file, order) => ({ imageId: crypto.randomUUID(), order, name: file.name, type: file.type, lastModified: file.lastModified, file, prompt: '', resultBlob: null, resultUrl: '', status: 'ready', error: '' }));
   for (const record of records) await persist(record);
   renderCards();
@@ -339,13 +340,32 @@ form.addEventListener('submit', async event => {
   await submitJob(records, promptInput.value.trim() || presets.cinema);
 });
 
-document.querySelector('#newBatch').addEventListener('click', () => resetBatch(true));
+document.querySelector('#newBatch').addEventListener('click', () => {
+  if (records.length || Object.keys(jobs).length) resetDialog.showModal();
+  else resetBatch();
+});
+resetDialog.addEventListener('close', () => {
+  if (resetDialog.returnValue === 'confirm') resetBatch();
+});
 for (const element of form.querySelectorAll('#model,#quality,#size,#prompt,#upscale8k')) element.addEventListener('change', saveSettings);
 document.querySelectorAll('[data-preset]').forEach(button => button.addEventListener('click', () => {
+  document.querySelectorAll('[data-preset]').forEach(item => { item.classList.remove('active'); item.setAttribute('aria-pressed', 'false'); });
+  button.classList.add('active');
+  button.setAttribute('aria-pressed', 'true');
   promptInput.value = presets[button.dataset.preset];
   saveSettings();
   setMessage(`已载入“${button.textContent.trim()}”提示词。`);
 }));
+
+if (matchMedia('(hover: hover) and (pointer: fine)').matches) {
+  photoGrid.addEventListener('pointermove', event => {
+    const card = event.target.closest('.photoCard');
+    if (!card) return;
+    const bounds = card.getBoundingClientRect();
+    card.style.setProperty('--pointer-x', `${event.clientX - bounds.left}px`);
+    card.style.setProperty('--pointer-y', `${event.clientY - bounds.top}px`);
+  });
+}
 
 async function initialize() {
   restoreSettings();

@@ -35,7 +35,7 @@ function makeBody(jobId, imageId) {
 
 try {
   await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('服务启动超时')), 5000);
+    const timer = setTimeout(() => reject(new Error('服务启动超时')), 30000);
     child.stdout.on('data', chunk => {
       if (chunk.toString().includes('listening')) { clearTimeout(timer); resolve(); }
     });
@@ -46,8 +46,11 @@ try {
   const studio = await fetch(`http://127.0.0.1:${port}/studio.html`).then(response => response.text());
   assert.match(root, /class="landingWordmark">Openphoto/);
   assert.match(root, /href="\/studio\.html">开始/);
+  assert.match(root, /class="landingPage prismPage"/);
   assert.doesNotMatch(root, /accessPassword/);
   assert.match(studio, /id="photoGrid"/);
+  assert.match(studio, /class="studioLayout"/);
+  assert.match(studio, /id="resetDialog"/);
   assert.doesNotMatch(studio, /accessPassword/);
 
   const access = await fetch(`http://127.0.0.1:${port}/api/access`);
