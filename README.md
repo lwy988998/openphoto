@@ -1,17 +1,15 @@
 # Openphoto AI Color
 
-个人试用版 GPT 图像编辑调色 Web 应用：上传原图，输入调色提示词，后端调用 OpenAI 兼容 Images Edit API。
+开放访问的 GPT 图像编辑调色 Web 应用。首页仅保留品牌入口，工作台支持最多 10 张图片的批量调色、逐张结果展示、单独下载和单图重新处理。
 
 ## 功能
 
-- 一次选择最多 10 张 PNG / JPG / WEBP 原图
-- 使用同一条提示词按顺序批量调色，并显示每张图片的处理状态
-- 输入中文调色提示词
-- 内置电影感、阳光闪耀、Smart HDR、Portra 胶片、卡片机预设
-- 可选“画质提升到 8K”：GPT 调色完成后，服务端把结果最长边放大到 7680px 并锐化
-- 简单访问密码保护批量接口
-- 服务端代理 API Key，不暴露到前端
-- 支持自定义 OpenAI 兼容端点，例如 `https://bya.re/v1`
+- 无需访问密码
+- PNG / JPG / WEBP 多图上传
+- 每张原图与对应结果独立成卡
+- 全局提示词批量处理，单图可改提示词后重新处理
+- IndexedDB 保存当前批次，刷新后恢复原图、结果和任务轮询
+- 服务端代理 API Key，可选 8K 后处理
 
 ## 本地运行
 
@@ -21,11 +19,9 @@ cp .env.example .env
 npm start
 ```
 
-默认监听 `39006` 端口。
+默认监听 `39006` 端口。访问 `/` 进入欢迎页，点击“开始”进入 `/studio.html`。
 
 ## 服务器配置
-
-推荐把密钥放到服务器环境文件中，不要提交到 GitHub：
 
 ```bash
 mkdir -p /etc/openphoto-ai-color
@@ -39,26 +35,15 @@ systemctl restart openphoto-ai-color
 
 ## API
 
-- `GET /api/status`：查看服务状态
-- `GET /api/access`：检查当前请求是否已通过访问密码
-- `POST /api/batch`：提交批量任务，立即返回任务 ID
-- `GET /api/batch/:id`：查询批量任务进度和结果
+- `GET /api/status`：服务状态
+- `POST /api/batch`：提交批量或单图任务
+- `GET /api/batch/:id`：查询任务状态与结果
 
-`POST /api/batch` 使用 multipart 表单字段：
+`POST /api/batch` 使用 multipart 字段：
 
-- `images`：图片文件，最多 10 张
-- `prompt`：调色提示词
-- `model`：默认 `gpt-image-2.5-sunburst`
-- `quality`：默认 `auto`
-- `size`：默认 `auto`
-- `upscale8k`：传入 `on` 或 `true` 时启用 8K 后处理
+- `images`：最多 10 张图片
+- `jobId`：可选 UUID；重复提交同一 ID 会返回原任务
+- `imageIds`：与图片顺序对应的唯一 UUID JSON 数组
+- `prompt`、`model`、`quality`、`size`、`upscale8k`
 
-批量接口需要请求头：
-
-```text
-x-openphoto-password: 你的访问密码
-```
-
-## 注意
-
-当前版本是个人试用 MVP，没有用户账号、计费和持久化历史记录。任务在服务进程内存中保存，服务重启后会失效。上游图像编辑是长耗时请求，因此采用后台任务 + 前端轮询，避免 Cloudflare 524 超时页面。
+任务保存在服务进程内存中并在完成 30 分钟后清理。浏览器刷新可以恢复；服务器重启后任务会失效。

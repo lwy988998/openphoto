@@ -47,140 +47,321 @@ const presets = {
 适合夜景、舞台、建筑或酷感人像。不要让肤色变黄，不要压暗到丢失主体，不要新增光效或改变背景。`,
 };
 
+const DB_NAME = 'openphoto-studio';
+const STORE_NAME = 'images';
+const SETTINGS_KEY = 'openphoto.settings';
+const JOBS_KEY = 'openphoto.jobs';
 const form = document.querySelector('#editForm');
 const imageInput = document.querySelector('#imageInput');
 const selectedFiles = document.querySelector('#selectedFiles');
-const originalPreview = document.querySelector('#originalPreview');
-const resultPreview = document.querySelector('#resultPreview');
 const promptInput = document.querySelector('#prompt');
 const message = document.querySelector('#message');
 const statusEl = document.querySelector('#status');
-const download = document.querySelector('#downloadLink');
-const downloadAll = document.querySelector('#downloadAll');
-const batchResults = document.querySelector('#batchResults');
-const debug = document.querySelector('#debug');
-let activeJob = null;
-let latestItems = [];
+const photoGrid = document.querySelector('#photoGrid');
+const submitButton = form.querySelector('.submitButton');
+const presetLabels = Object.fromEntries([...document.querySelectorAll('[data-preset]')].map(button => [button.dataset.preset, button.textContent.trim()]));
+let records = [];
+let jobs = loadJson(JOBS_KEY, {});
+const polling = new Set();
+const objectUrls = new Set();
 
-promptInput.value = presets.cinema;
+function loadJson(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch { return fallback; }
+}
 
-fetch('/api/status')
-  .then(r => r.json())
-  .then(data => {
-    statusEl.textContent = data.hasOpenAIKey ? 'OpenAI Key 已配置' : 'OpenAI Key 未配置，可临时输入';
-    statusEl.className = `status ${data.hasOpenAIKey ? 'ok' : 'warn'}`;
-  })
-  .catch(() => {
-    statusEl.textContent = '服务状态异常';
-    statusEl.className = 'status warn';
+function saveJson(key, value) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+const dbPromise = new Promise((resolve, reject) => {
+  const request = indexedDB.open(DB_NAME, 1);
+  request.onupgradeneeded = () => request.result.createObjectStore(STORE_NAME, { keyPath: 'imageId' });
+  request.onsuccess = () => resolve(request.result);
+  request.onerror = () => reject(request.error);
+});
+
+async function dbRequest(mode, operation) {
+  const db = await dbPromise;
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, mode);
+    const request = operation(tx.objectStore(STORE_NAME));
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
   });
+}
 
-document.querySelectorAll('[data-preset]').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const preset = presets[btn.dataset.preset];
-    if (!preset) {
-      message.className = 'message error';
-      message.textContent = `未找到“${btn.textContent.trim()}”的提示词，请刷新页面后重试。`;
-      return;
-    }
-    promptInput.value = preset;
-    message.className = 'message';
-    message.textContent = `已载入“${btn.textContent.trim()}”提示词。`;
+const readImages = () => dbRequest('readonly', store => store.getAll());
+const putImage = record => dbRequest('readwrite', store => store.put(record));
+const clearImages = () => dbRequest('readwrite', store => store.clear());
+
+function setMessage(text, error = false) {
+  message.textContent = text;
+  message.className = `message${error ? ' error' : ''}`;
+}
+
+function saveSettings() {
+  saveJson(SETTINGS_KEY, {
+    model: document.querySelector('#model').value,
+    quality: document.querySelector('#quality').value,
+    size: document.querySelector('#size').value,
+    prompt: promptInput.value,
+    upscale8k: document.querySelector('#upscale8k').checked,
   });
-});
+}
 
-imageInput.addEventListener('change', () => {
-  const files = [...(imageInput.files || [])].slice(0, 10);
-  if (imageInput.files.length > 10) message.textContent = '最多处理 10 张照片，已自动取前 10 张。';
-  selectedFiles.textContent = files.length ? `已选择 ${files.length} 张照片：${files.map(file => file.name).join('、')}` : '尚未选择照片';
-  const file = files[0];
-  if (!file) return;
-  originalPreview.src = URL.createObjectURL(file);
-  resultPreview.removeAttribute('src');
-  download.classList.remove('ready');
-  debug.textContent = '';
-  batchResults.innerHTML = '';
-});
-
-form.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  message.className = 'message';
-  const files = [...(imageInput.files || [])].slice(0, 10);
-  const password = document.querySelector('#accessPassword').value.trim();
-  if (!password) { message.className = 'message error'; message.textContent = '请输入访问密码。'; return; }
-  if (!files.length) { message.className = 'message error'; message.textContent = '请至少选择一张照片。'; return; }
-  const wants8K = Boolean(document.querySelector('#upscale8k')?.checked);
-  message.textContent = wants8K
-    ? '正在调用 GPT 图像编辑模型，并在完成后提升到 8K，可能需要 1–4 分钟...'
-    : '正在上传并调用 GPT 图像编辑模型，可能需要 30–180 秒...';
-  resultPreview.classList.add('loading');
-  download.classList.remove('ready');
-  downloadAll.classList.remove('ready');
-  debug.textContent = '';
-  batchResults.innerHTML = '';
-  const submit = form.querySelector('.submit');
-  submit.disabled = true;
-
-  try {
-    const body = new FormData();
-    files.forEach(file => body.append('images', file, file.name));
-    body.append('model', document.querySelector('#model').value);
-    body.append('quality', document.querySelector('#quality').value);
-    body.append('size', document.querySelector('#size').value);
-    body.append('prompt', promptInput.value);
-    body.append('upscale8k', wants8K ? 'on' : '');
-    body.append('temporaryApiKey', document.querySelector('#temporaryApiKey').value);
-    const headers = { 'x-openphoto-password': password };
-    const response = await fetch('/api/batch', { method: 'POST', body, headers });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `请求失败：HTTP ${response.status}`);
-    activeJob = data.job.id;
-    await pollBatch(activeJob, password);
-  } catch (err) {
-    message.className = 'message error';
-    message.textContent = err.message || '调色失败';
-  } finally {
-    resultPreview.classList.remove('loading');
-    submit.disabled = false;
+function restoreSettings() {
+  const settings = loadJson(SETTINGS_KEY, {});
+  for (const key of ['model', 'quality', 'size']) {
+    const element = document.querySelector(`#${key}`);
+    if (settings[key] && [...element.options].some(option => option.value === settings[key])) element.value = settings[key];
   }
-});
+  promptInput.value = settings.prompt || presets.cinema;
+  document.querySelector('#upscale8k').checked = Boolean(settings.upscale8k);
+}
 
-async function pollBatch(jobId, password) {
-  const response = await fetch(`/api/batch/${encodeURIComponent(jobId)}`, { headers: { 'x-openphoto-password': password }, cache: 'no-store' });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `任务查询失败：HTTP ${response.status}`);
-  const job = data.job;
-  latestItems = job.items;
-  batchResults.innerHTML = job.items.map(item => {
-    const status = item.status === 'completed' ? '已完成' : item.status === 'failed' ? `失败：${item.error || '未知错误'}` : item.status === 'processing' ? '处理中…' : '排队中';
-    return `<div class="batchItem"><span>${escapeHtml(item.name)}</span><b class="batchStatus ${item.status}">${status}</b></div>`;
-  }).join('');
-  message.textContent = `批量处理中：${job.completed} / ${job.total} 已完成${job.failed ? `，${job.failed} 张失败` : ''}`;
-  const first = job.items.find(item => item.status === 'completed' && item.result);
-  if (first) {
-    resultPreview.src = first.result.image;
-    download.href = first.result.image;
-    download.download = first.result.upscale?.upscaled ? 'openphoto-ai-color-8k.jpg' : `openphoto-ai-color.${first.result.outputFormat || 'png'}`;
-    download.classList.add('ready');
-  }
-  if (job.status === 'queued' || job.status === 'processing') {
-    await new Promise(resolve => setTimeout(resolve, 1800));
-    return pollBatch(jobId, password);
-  }
-  if (job.completed > 0) downloadAll.classList.add('ready');
-  message.textContent = job.status === 'completed' ? `批量调色完成：${job.completed} / ${job.total} 张。` : `批量处理结束：完成 ${job.completed} 张，失败 ${job.failed} 张。`;
-  debug.textContent = '每张图片按顺序处理，失败图片不会影响其他结果。';
+function statusText(status) {
+  return ({ ready: '等待处理', queued: '排队中', processing: '处理中…', completed: '已完成', failed: '处理失败' })[status] || '等待处理';
 }
 
 function escapeHtml(value) {
-  return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+  return String(value).replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
 }
 
-downloadAll.addEventListener('click', () => {
-  latestItems.filter(item => item.status === 'completed' && item.result?.image).forEach((item, index) => {
-    const link = document.createElement('a');
-    link.href = item.result.image;
-    link.download = `openphoto-${String(index + 1).padStart(2, '0')}-${item.name.replace(/[^\w.-]+/g, '_')}`;
-    link.click();
+function resultName(record) {
+  const base = record.name.replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_');
+  const extension = record.resultFormat === 'jpg' ? 'jpeg' : (record.resultFormat || 'png');
+  return `${base}-openphoto.${extension}`;
+}
+
+function releaseObjectUrls() {
+  for (const url of objectUrls) URL.revokeObjectURL(url);
+  objectUrls.clear();
+}
+
+function blobUrl(blob) {
+  const url = URL.createObjectURL(blob);
+  objectUrls.add(url);
+  return url;
+}
+
+function renderCards() {
+  releaseObjectUrls();
+  selectedFiles.textContent = records.length ? `已保存 ${records.length} 张照片：${records.map(record => record.name).join('、')}` : '尚未选择照片';
+  if (!records.length) {
+    photoGrid.innerHTML = '<p class="emptyState">上传照片后，每张原图和对应结果都会显示在这里。</p>';
+    return;
+  }
+  photoGrid.innerHTML = records.map(record => {
+    const sourceUrl = blobUrl(record.file);
+    const outputUrl = record.resultBlob ? blobUrl(record.resultBlob) : record.resultUrl;
+    const prompt = record.prompt || promptInput.value;
+    const options = Object.entries(presetLabels).map(([key, label]) => `<option value="${key}">${escapeHtml(label)}</option>`).join('');
+    const result = outputUrl
+      ? `<img src="${escapeHtml(outputUrl)}" alt="${escapeHtml(record.name)} 的处理结果">`
+      : `<div class="resultPlaceholder ${record.status === 'processing' || record.status === 'queued' ? 'processing' : ''}">${record.error ? escapeHtml(record.error) : statusText(record.status)}</div>`;
+    return `<article class="photoCard glass" data-image-id="${record.imageId}">
+      <header class="cardHeader"><strong title="${escapeHtml(record.name)}">${escapeHtml(record.name)}</strong><span class="cardStatus ${record.status}">${statusText(record.status)}</span></header>
+      <div class="imageStack">
+        <div class="imagePane"><span class="imageLabel">原图</span><img src="${sourceUrl}" alt="${escapeHtml(record.name)} 原图"></div>
+        <div class="imagePane"><span class="imageLabel">处理结果</span>${result}</div>
+      </div>
+      <div class="cardActions">
+        <a class="cardButton primary" ${outputUrl ? `href="${escapeHtml(outputUrl)}" download="${escapeHtml(resultName(record))}"` : 'aria-disabled="true"'}>单独下载</a>
+      </div>
+      <details class="cardPrompt">
+        <summary>更换提示词并重新处理</summary>
+        <label>选择预设<select class="cardPreset"><option value="">自定义</option>${options}</select></label>
+        <label>单图提示词<textarea class="cardPromptText">${escapeHtml(prompt)}</textarea></label>
+        <button class="cardButton reprocessButton" type="button" ${record.status === 'processing' || record.status === 'queued' ? 'disabled' : ''}>重新处理这张照片</button>
+      </details>
+    </article>`;
+  }).join('');
+
+  photoGrid.querySelectorAll('.photoCard').forEach(card => {
+    const record = records.find(item => item.imageId === card.dataset.imageId);
+    const textarea = card.querySelector('.cardPromptText');
+    card.querySelector('.cardPreset').addEventListener('change', event => {
+      if (event.target.value) textarea.value = presets[event.target.value];
+    });
+    textarea.addEventListener('change', async () => {
+      record.prompt = textarea.value;
+      await persist(record);
+    });
+    card.querySelector('.reprocessButton').addEventListener('click', async () => {
+      record.prompt = textarea.value.trim() || promptInput.value;
+      await persist(record);
+      await submitJob([record], record.prompt);
+    });
   });
+}
+
+async function persist(record) {
+  try { await putImage(record); }
+  catch (error) { console.error(error); setMessage('浏览器存储空间不足，本页关闭前仍可继续处理。', true); }
+}
+
+async function storeResult(record, item, jobId) {
+  if (record.resultJobId === jobId || !item.result?.image) return;
+  record.resultJobId = jobId;
+  record.resultFormat = item.result.outputFormat || 'png';
+  record.error = '';
+  try {
+    const response = await fetch(item.result.image);
+    if (!response.ok) throw new Error('结果下载失败');
+    record.resultBlob = await response.blob();
+    record.resultUrl = '';
+  } catch {
+    record.resultUrl = item.result.image;
+  }
+}
+
+function saveJobs() {
+  saveJson(JOBS_KEY, jobs);
+}
+
+function setRecordStatus(imageIds, status, error = '') {
+  for (const record of records.filter(item => imageIds.includes(item.imageId))) {
+    record.status = status;
+    record.error = error;
+    persist(record);
+  }
+  renderCards();
+}
+
+async function pollJob(jobId) {
+  if (polling.has(jobId) || !jobs[jobId]) return;
+  polling.add(jobId);
+  let misses = 0;
+  try {
+    while (jobs[jobId]) {
+      let response;
+      try { response = await fetch(`/api/batch/${encodeURIComponent(jobId)}`, { cache: 'no-store' }); }
+      catch {
+        await new Promise(resolve => setTimeout(resolve, 1800));
+        continue;
+      }
+      if (response.status === 404 && misses++ < 3) {
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        continue;
+      }
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const imageIds = jobs[jobId]?.imageIds || [];
+        delete jobs[jobId];
+        saveJobs();
+        setRecordStatus(imageIds, 'failed', data.error || '任务未创建，请重新提交。');
+        setMessage(data.error || '上次上传未完成，原图已保留，可重新提交。', true);
+        return;
+      }
+      const job = data.job;
+      for (const item of job.items) {
+        const record = records.find(entry => entry.imageId === item.imageId);
+        if (!record) continue;
+        record.status = item.status;
+        if (item.status === 'failed') record.error = item.error || '处理失败';
+        if (item.status === 'completed') await storeResult(record, item, jobId);
+        await persist(record);
+      }
+      renderCards();
+      setMessage(`处理中：${job.completed} / ${job.total} 已完成${job.failed ? `，${job.failed} 张失败` : ''}`);
+      if (job.status === 'queued' || job.status === 'processing') {
+        await new Promise(resolve => setTimeout(resolve, 1800));
+        continue;
+      }
+      delete jobs[jobId];
+      saveJobs();
+      setMessage(job.status === 'completed' ? `处理完成：${job.completed} / ${job.total} 张。` : `处理结束：完成 ${job.completed} 张，失败 ${job.failed} 张。`, job.failed > 0);
+      return;
+    }
+  } finally {
+    polling.delete(jobId);
+    submitButton.disabled = Object.keys(jobs).length > 0;
+  }
+}
+
+async function submitJob(targetRecords, prompt) {
+  if (!targetRecords.length) return;
+  const jobId = crypto.randomUUID();
+  jobs[jobId] = { imageIds: targetRecords.map(record => record.imageId) };
+  saveJobs();
+  setRecordStatus(jobs[jobId].imageIds, 'queued');
+  submitButton.disabled = true;
+  setMessage(targetRecords.length > 1 ? `正在上传 ${targetRecords.length} 张照片…` : '正在上传并重新处理这张照片…');
+
+  const body = new FormData();
+  targetRecords.forEach(record => body.append('images', record.file, record.name));
+  body.append('jobId', jobId);
+  body.append('imageIds', JSON.stringify(jobs[jobId].imageIds));
+  body.append('model', document.querySelector('#model').value);
+  body.append('quality', document.querySelector('#quality').value);
+  body.append('size', document.querySelector('#size').value);
+  body.append('prompt', prompt);
+  body.append('upscale8k', document.querySelector('#upscale8k').checked ? 'on' : '');
+  body.append('temporaryApiKey', document.querySelector('#temporaryApiKey').value);
+
+  try {
+    const response = await fetch('/api/batch', { method: 'POST', body });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `请求失败：HTTP ${response.status}`);
+    await pollJob(jobId);
+  } catch (error) {
+    setMessage(`${error.message || '上传响应中断'}，正在尝试恢复任务…`, true);
+    await pollJob(jobId);
+  }
+}
+
+async function resetBatch(confirmFirst = true) {
+  if (confirmFirst && (records.length || Object.keys(jobs).length) && !window.confirm('新建批次会清除当前照片和结果，确定继续吗？')) return;
+  releaseObjectUrls();
+  await clearImages();
+  records = [];
+  jobs = {};
+  saveJobs();
+  imageInput.value = '';
+  renderCards();
+  setMessage('已新建空白批次。');
+}
+
+imageInput.addEventListener('change', async () => {
+  const files = [...imageInput.files].filter(file => /^image\/(png|jpe?g|webp)$/i.test(file.type)).slice(0, 10);
+  if (!files.length) return;
+  await resetBatch(false);
+  records = files.map((file, order) => ({ imageId: crypto.randomUUID(), order, name: file.name, type: file.type, lastModified: file.lastModified, file, prompt: '', resultBlob: null, resultUrl: '', status: 'ready', error: '' }));
+  for (const record of records) await persist(record);
+  renderCards();
+  setMessage(`已保存 ${records.length} 张照片，刷新页面也不会丢失。`);
 });
+
+form.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!records.length) return setMessage('请至少上传一张照片。', true);
+  saveSettings();
+  await submitJob(records, promptInput.value.trim() || presets.cinema);
+});
+
+document.querySelector('#newBatch').addEventListener('click', () => resetBatch(true));
+for (const element of form.querySelectorAll('#model,#quality,#size,#prompt,#upscale8k')) element.addEventListener('change', saveSettings);
+document.querySelectorAll('[data-preset]').forEach(button => button.addEventListener('click', () => {
+  promptInput.value = presets[button.dataset.preset];
+  saveSettings();
+  setMessage(`已载入“${button.textContent.trim()}”提示词。`);
+}));
+
+async function initialize() {
+  restoreSettings();
+  fetch('/api/status').then(response => response.json()).then(data => {
+    statusEl.textContent = data.hasOpenAIKey ? '服务已就绪' : 'OpenAI Key 未配置';
+    statusEl.className = `status ${data.hasOpenAIKey ? 'ok' : 'warn'}`;
+  }).catch(() => { statusEl.textContent = '服务状态异常'; statusEl.className = 'status warn'; });
+  try {
+    records = (await readImages()).sort((a, b) => a.order - b.order);
+    renderCards();
+    if (records.length) setMessage(`已恢复 ${records.length} 张照片。`);
+    for (const jobId of Object.keys(jobs)) pollJob(jobId);
+  } catch (error) {
+    console.error(error);
+    setMessage('浏览器存储不可用，刷新恢复功能暂不可用。', true);
+  }
+}
+
+initialize();

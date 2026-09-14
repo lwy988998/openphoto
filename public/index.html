@@ -3,181 +3,18 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Openphoto AI 调色试用版</title>
+  <title>Openphoto</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=20260914-liquid-batch" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css?v=20260914-studio" />
 </head>
-<body>
+<body class="landingPage">
   <div class="ambient ambient-one"></div>
   <div class="ambient ambient-two"></div>
-  <main class="shell">
-    <nav class="topbar glass hairline">
-      <div class="brand">
-        <span class="brandMark"></span>
-        <span>Openphoto</span>
-      </div>
-      <div class="topMeta">
-        <span>GPT Image Editing</span>
-        <span class="dot"></span>
-        <span>AI Color Studio</span>
-      </div>
-      <div class="status" id="status">检查服务中...</div>
-    </nav>
-
-    <section class="hero">
-      <div class="heroCopy">
-        <p class="eyebrow">Matte Black · Liquid Glass · Prompt Color Grading</p>
-        <h1 class="wordmark" aria-label="Openphoto">
-          <span>Openphoto</span>
-        </h1>
-        <p class="subtitle">上传照片，选择调色预设或输入自己的提示词。系统会调用 GPT 图像编辑模型保持画面主体不变，只做色彩、光影和质感后期。</p>
-      </div>
-      <div class="heroStats glass hairline">
-        <div><strong>23</strong><span>调色预设</span></div>
-        <div><strong>8K</strong><span>可选增强</span></div>
-        <div><strong>API</strong><span>服务端代理</span></div>
-      </div>
-    </section>
-
-    <section class="workspace">
-      <form id="editForm" class="panel controls glass hairline">
-        <div class="panelHeader">
-          <span class="step">01</span>
-          <div>
-            <h2>输入</h2>
-            <p>上传图片，选择模型和提示词</p>
-          </div>
-        </div>
-
-        <label class="accessField">访问密码
-          <input id="accessPassword" name="accessPassword" type="password" value="" placeholder="请输入访问密码" autocomplete="current-password" required />
-        </label>
-
-        <label class="drop liquidDrop" for="imageInput">
-          <input id="imageInput" name="images" type="file" accept="image/png,image/jpeg,image/webp" multiple required />
-          <span class="dropIcon">↥</span>
-          <span class="dropTitle">上传原始照片</span>
-          <span class="dropHint">可一次选择最多 10 张 · PNG / JPG / WEBP</span>
-          <span class="selectedFiles" id="selectedFiles">尚未选择照片</span>
-        </label>
-
-        <div class="row">
-          <label>模型
-            <select id="model" name="model">
-              <option value="gpt-image-2.5-sunburst" selected>gpt-image-2.5-sunburst（最强编辑/调色）</option>
-              <option value="gpt-image-2.5-flare">gpt-image-2.5-flare（更快）</option>
-              <option value="gpt-image-2">gpt-image-2（稳定备选）</option>
-              <option value="gpt-image-1.5">gpt-image-1.5</option>
-              <option value="gpt-image-1">gpt-image-1</option>
-              <option value="gpt-image-1-mini">gpt-image-1-mini（便宜）</option>
-            </select>
-          </label>
-          <label>质量
-            <select id="quality" name="quality">
-              <option value="auto" selected>auto</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-              <option value="xhigh">xhigh</option>
-              <option value="max">max</option>
-              <option value="low">low</option>
-            </select>
-          </label>
-          <label>尺寸
-            <select id="size" name="size">
-              <option value="auto" selected>auto</option>
-              <option value="1024x1024">1024x1024</option>
-              <option value="1024x1536">1024x1536</option>
-              <option value="1536x1024">1536x1024</option>
-            </select>
-          </label>
-        </div>
-
-        <label>调色提示词
-          <textarea id="prompt" name="prompt" rows="12"></textarea>
-        </label>
-
-        <label class="featureToggle liquidToggle">
-          <input id="upscale8k" name="upscale8k" type="checkbox" />
-          <span>
-            <strong>画质提升到 8K</strong>
-            <small>独立功能：GPT 调色完成后，服务端把结果最长边放大到 7680px 并锐化，可搭配任意提示词使用。</small>
-          </span>
-        </label>
-
-        <div class="presetBlock">
-          <div class="sectionLabel">
-            <span>Style Presets</span>
-            <small>点击载入提示词</small>
-          </div>
-          <div class="presets">
-            <button type="button" data-preset="cinema">电影绿金</button>
-            <button type="button" data-preset="sparkle">阳光闪耀</button>
-            <button type="button" data-preset="hdr">Smart HDR</button>
-            <button type="button" data-preset="portra">Portra 胶片</button>
-            <button type="button" data-preset="digicam">卡片机</button>
-            <button type="button" data-preset="alexa">ARRI 高端</button>
-            <button type="button" data-preset="blockbuster">大片海报</button>
-            <button type="button" data-preset="japanese">日系清透</button>
-            <button type="button" data-preset="hongkong">港风电影</button>
-            <button type="button" data-preset="korean">韩系写真</button>
-            <button type="button" data-preset="fuji">富士直出</button>
-            <button type="button" data-preset="cinestill">CineStill 夜景</button>
-            <button type="button" data-preset="polaroid">宝丽来</button>
-            <button type="button" data-preset="disposable">一次性胶片</button>
-            <button type="button" data-preset="cleanCommercial">商业干净</button>
-            <button type="button" data-preset="moodyForest">森林电影</button>
-            <button type="button" data-preset="summer">夏日清爽</button>
-            <button type="button" data-preset="nightFlash">夜晚直闪</button>
-            <button type="button" data-preset="vintageDV">复古 DV</button>
-            <button type="button" data-preset="food">美食摄影</button>
-            <button type="button" data-preset="product">产品摄影</button>
-            <button type="button" data-preset="portraitNatural">自然人像</button>
-            <button type="button" data-preset="blackGold">黑金电影</button>
-          </div>
-        </div>
-
-        <details class="advanced glassMini">
-          <summary>高级：临时 API Key</summary>
-          <p>推荐在服务器配置 Key；如果只是临时试用，可输入短期 OpenAI API Key。本页面当前是 HTTP，长期 Key 不建议在这里输入。</p>
-          <input id="temporaryApiKey" name="temporaryApiKey" type="password" autocomplete="off" placeholder="sk-...（仅本次请求使用，不保存）" />
-        </details>
-
-        <button class="submit liquidButton" type="submit">
-          <span>开始 AI 调色</span>
-          <small>Generate</small>
-        </button>
-        <p id="message" class="message"></p>
-      </form>
-
-      <section class="panel preview glass hairline">
-        <div class="panelHeader previewHeader">
-          <span class="step">02</span>
-          <div>
-            <h2>预览</h2>
-            <p>原图与调色结果并排对比</p>
-          </div>
-        </div>
-        <div class="compare">
-          <div class="imageCard">
-            <div class="imageTop"><h2>原图</h2><span>Input</span></div>
-            <img id="originalPreview" alt="原图预览" />
-          </div>
-          <div class="imageCard resultCard">
-            <div class="imageTop"><h2>调色结果</h2><span>Output</span></div>
-            <img id="resultPreview" alt="调色结果" />
-          </div>
-        </div>
-        <div class="actions">
-          <a id="downloadLink" class="download liquidDownload" download="openphoto-ai-color.png">下载当前结果</a>
-          <button id="downloadAll" class="download liquidDownload" type="button">下载全部结果</button>
-        </div>
-        <div id="batchResults" class="batchResults"></div>
-        <pre id="debug" class="debug"></pre>
-      </section>
-    </section>
+  <main class="landing">
+    <h1 class="landingWordmark">Openphoto</h1>
+    <a class="startButton" href="/studio.html">开始</a>
   </main>
-  <script src="/app.js?v=20260912-batch-password"></script>
 </body>
 </html>

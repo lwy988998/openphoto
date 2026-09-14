@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI 调色工作台</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css?v=20260914-studio" />
+</head>
+<body>
+  <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
+  <main class="studioShell">
+    <nav class="studioBar glass hairline">
+      <a href="/" class="backLink">← 返回首页</a><h1>AI 调色工作台</h1><span class="status" id="status">检查服务中…</span>
+    </nav>
+    <form id="editForm" class="settings glass hairline">
+      <div class="sectionHeading"><div><span class="step">01</span><h2>设置与上传</h2></div><button id="newBatch" class="secondaryButton" type="button">新建批次</button></div>
+      <div class="settingsGrid">
+        <label>模型<select id="model" name="model"><option value="gpt-image-2.5-sunburst">gpt-image-2.5-sunburst</option><option value="gpt-image-2.5-flare">gpt-image-2.5-flare</option><option value="gpt-image-2">gpt-image-2</option><option value="gpt-image-1.5">gpt-image-1.5</option><option value="gpt-image-1">gpt-image-1</option><option value="gpt-image-1-mini">gpt-image-1-mini</option></select></label>
+        <label>质量<select id="quality" name="quality"><option value="auto">auto</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option><option value="low">low</option></select></label>
+        <label>尺寸<select id="size" name="size"><option value="auto">auto</option><option value="1024x1024">1024x1024</option><option value="1024x1536">1024x1536</option><option value="1536x1024">1536x1024</option></select></label>
+        <label class="featureToggle"><input id="upscale8k" name="upscale8k" type="checkbox" /><span><strong>提升到 8K</strong><small>完成调色后放大并锐化</small></span></label>
+      </div>
+      <div class="promptLayout">
+        <label>全局提示词<textarea id="prompt" name="prompt" rows="7"></textarea></label>
+        <div class="presetBlock"><div class="sectionLabel"><span>调色预设</span><small>点击载入</small></div><div class="presets">
+          <button type="button" data-preset="cinema">电影绿金</button><button type="button" data-preset="sparkle">阳光闪耀</button><button type="button" data-preset="hdr">Smart HDR</button><button type="button" data-preset="portra">Portra 胶片</button><button type="button" data-preset="digicam">卡片机</button><button type="button" data-preset="alexa">ARRI 高端</button><button type="button" data-preset="blockbuster">大片海报</button><button type="button" data-preset="japanese">日系清透</button><button type="button" data-preset="hongkong">港风电影</button><button type="button" data-preset="korean">韩系写真</button><button type="button" data-preset="fuji">富士直出</button><button type="button" data-preset="cinestill">CineStill 夜景</button><button type="button" data-preset="polaroid">宝丽来</button><button type="button" data-preset="disposable">一次性胶片</button><button type="button" data-preset="cleanCommercial">商业干净</button><button type="button" data-preset="moodyForest">森林电影</button><button type="button" data-preset="summer">夏日清爽</button><button type="button" data-preset="nightFlash">夜晚直闪</button><button type="button" data-preset="vintageDV">复古 DV</button><button type="button" data-preset="food">美食摄影</button><button type="button" data-preset="product">产品摄影</button><button type="button" data-preset="portraitNatural">自然人像</button><button type="button" data-preset="blackGold">黑金电影</button>
+        </div></div>
+      </div>
+      <label class="drop" for="imageInput"><input id="imageInput" name="images" type="file" accept="image/png,image/jpeg,image/webp" multiple /><span class="dropIcon">↥</span><strong>上传原始照片</strong><small>最多 10 张 · PNG / JPG / WEBP · 刷新后自动恢复</small><span id="selectedFiles">尚未选择照片</span></label>
+      <details class="advanced"><summary>高级：临时 API Key</summary><p>仅随本次请求发送，不会保存到浏览器。</p><input id="temporaryApiKey" name="temporaryApiKey" type="password" autocomplete="off" placeholder="sk-…" /></details>
+      <button class="submitButton" type="submit"><span>开始批量处理</span><small>Generate</small></button>
+      <p id="message" class="message" aria-live="polite"></p>
+    </form>
+    <section class="resultsSection">
+      <div class="sectionHeading"><div><span class="step">02</span><h2>照片与结果</h2></div></div>
+      <div id="photoGrid" class="photoGrid"><p class="emptyState">上传照片后，每张原图和对应结果都会显示在这里。</p></div>
+    </section>
+  </main>
+  <script src="/app.js?v=20260914-studio"></script>
+</body>
+</html>

@@ -3,6 +3,7 @@ import multer from 'multer';
 import sharp from 'sharp';
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -11,13 +12,12 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = Number(process.env.PORT || 39006);
 const jobs = new Map();
-const accessPassword = (process.env.OPENPHOTO_ACCESS_PASSWORD || readEnvFile().OPENPHOTO_ACCESS_PASSWORD || '').trim();
 const jobTtlMs = 30 * 60 * 1000;
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const allowedModels = new Set(['gpt-image-2.5-sunburst', 'gpt-image-2.5-flare', 'gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini']);
 const allowedQuality = new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max']);
 const allowedSizes = new Set(['auto', '1024x1024', '1024x1536', '1536x1024']);
 const allowedOutputFormats = new Set(['png', 'jpeg', 'jpg', 'webp']);
-if (!accessPassword) throw new Error('必须配置 OPENPHOTO_ACCESS_PASSWORD。');
 sharp.cache(false);
 sharp.concurrency(1);
 const upload = multer({
@@ -36,19 +36,6 @@ app.use(express.static(path.join(__dirname, 'public'), {
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   },
 }));
-
-function isAuthorized(req) {
-  return req.headers['x-openphoto-password'] === accessPassword || req.query.password === accessPassword;
-}
-
-function requireAccess(req, res, next) {
-  if (isAuthorized(req)) return next();
-  res.status(401).json({ error: '需要访问密码。' });
-}
-
-app.get('/api/access', (req, res) => {
-  res.json({ authorized: isAuthorized(req) });
-});
 
 function readEnvFile() {
   const file = process.env.OPENPHOTO_ENV_FILE || '/etc/openphoto-ai-color/openai.env';
@@ -172,6 +159,7 @@ function safeJob(job) {
 }
 
 async function runJob(job, options) {
+  job.status = 'processing';
   for (const item of job.items) {
     if (job.status === 'cancelled') break;
     item.status = 'processing';
@@ -183,10 +171,13 @@ async function runJob(job, options) {
   setTimeout(() => jobs.delete(job.id), jobTtlMs).unref();
 }
 
-app.post('/api/batch', requireAccess, upload.array('images', 10), async (req, res) => {
+app.post('/api/batch', upload.array('images', 10), async (req, res) => {
   try {
     const fallbackKey = configuredKey();
     const body = req.body || {};
+    const suppliedJobId = String(body.jobId || '').trim();
+    if (suppliedJobId && !uuidPattern.test(suppliedJobId)) return res.status(400).json({ error: 'jobId 必须是有效 UUID。' });
+    if (suppliedJobId && jobs.has(suppliedJobId)) return res.status(202).json({ job: safeJob(jobs.get(suppliedJobId)) });
     const temporaryKey = String(body.temporaryApiKey || '').trim();
     const apiKey = fallbackKey || temporaryKey;
     if (!apiKey) {
@@ -207,8 +198,13 @@ app.post('/api/batch', requireAccess, upload.array('images', 10), async (req, re
       return res.status(400).json({ error: '模型、质量、尺寸或输出格式参数无效。' });
     }
     if (userPrompt.length > 4000) return res.status(400).json({ error: '调色提示词不能超过 4000 个字符。' });
+    let imageIds = [];
+    try { imageIds = JSON.parse(String(body.imageIds || '[]')); } catch { return res.status(400).json({ error: 'imageIds 必须是 JSON 数组。' }); }
+    if (!Array.isArray(imageIds) || imageIds.length !== req.files.length || imageIds.some(id => !uuidPattern.test(String(id))) || new Set(imageIds).size !== imageIds.length) {
+      return res.status(400).json({ error: 'imageIds 必须与图片一一对应且均为唯一 UUID。' });
+    }
     const prompt = buildPrompt(userPrompt);
-    const job = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, status: 'queued', items: req.files.map((file, index) => ({ index, name: file.originalname, status: 'queued', file })) };
+    const job = { id: suppliedJobId || randomUUID(), status: 'queued', items: req.files.map((file, index) => ({ index, imageId: imageIds[index], name: file.originalname, status: 'queued', file })) };
     jobs.set(job.id, job);
     runJob(job, { apiKey, model, upscale8k, quality, size, requestOutputFormat, prompt }).catch((err) => {
       job.status = 'completed_with_errors';
@@ -227,7 +223,7 @@ app.post('/api/batch', requireAccess, upload.array('images', 10), async (req, re
   }
 });
 
-app.get('/api/batch/:id', requireAccess, (req, res) => {
+app.get('/api/batch/:id', (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: '任务不存在或已过期。' });
   res.json({ job: safeJob(job) });
