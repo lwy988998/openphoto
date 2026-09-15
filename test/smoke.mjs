@@ -47,6 +47,7 @@ try {
 
   const root = await fetch(`http://127.0.0.1:${port}/`).then(response => response.text());
   const studio = await fetch(`http://127.0.0.1:${port}/studio.html`).then(response => response.text());
+  const appScript = await fetch(`http://127.0.0.1:${port}/app.js`).then(response => response.text());
   assert.match(root, /class="landingWordmark">Openphoto/);
   assert.match(root, /href="\/studio\.html">开始/);
   assert.match(root, /class="landingPage prismPage"/);
@@ -58,6 +59,11 @@ try {
   assert.equal((studio.match(/data-preset-category=/g) || []).length, 5);
   assert.equal((studio.match(/data-preset-panel=/g) || []).length, 5);
   assert.equal((studio.match(/data-preset="/g) || []).length, 50);
+  const preservation = appScript.match(/const preservationFramework = `([^`]*)`;/)?.[1] || '';
+  const finish = appScript.match(/const professionalFinish = `([^`]*)`;/)?.[1] || '';
+  const presetTexts = [...appScript.matchAll(/^  [A-Za-z][A-Za-z0-9]*: `([^`]*)`,/gm)].map(match => `${preservation}\n${match[1]}\n${finish}`);
+  assert.equal(presetTexts.length, 50);
+  assert.ok(presetTexts.every(prompt => prompt.length >= 90));
   assert.doesNotMatch(studio, /accessPassword/);
 
   const access = await fetch(`http://127.0.0.1:${port}/api/access`);

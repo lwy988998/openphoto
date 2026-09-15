@@ -51,6 +51,10 @@ const presets = {
   partyFlash: `派对直闪：依据原图光线增强干净直闪、明亮主体、深色背景、冷暖反差和细小噪点；不新增灯具或红眼。`,
 };
 
+const preservationFramework = `将原始照片完整保持原样。绝对不要改变、新增、移除、替换、重新绘制或重新生成主体、脸部、五官、发型、服装、身体比例、姿势、手部、物体数量、构图、裁切、相机角度、透视、景别、背景物体、环境结构或画面边界。`;
+const professionalFinish = `所有调整都必须依据原图已有的光线、颜色和材质自然完成，准确控制白平衡、曝光、色调曲线、高光、阴影、局部对比度、动态范围、纹理与颗粒。避免过度饱和、色阶断裂、脏灰暗部、高光溢出、塑料质感和人工滤镜痕迹。最终呈现同一张真实照片经过专业摄影后期后的完整成片，优先保证原图细节与身份一致，其次才是风格强度。`;
+for (const key of Object.keys(presets)) presets[key] = `${preservationFramework}\n${presets[key]}\n${professionalFinish}`;
+
 const DB_NAME = 'openphoto-studio';
 const STORE_NAME = 'images';
 const SETTINGS_KEY = 'openphoto.settings';
