@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=20260915-upload" />
+  <link rel="stylesheet" href="/styles.css?v=20260915-presets" />
 </head>
 <body class="studioPage">
   <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
@@ -24,9 +24,31 @@
           <label class="featureToggle"><input id="upscale8k" name="upscale8k" type="checkbox" /><span><strong>提升到 8K</strong><small>完成调色后放大并锐化</small></span></label>
         </div>
         <div class="promptLayout">
-          <div class="presetBlock"><div class="sectionLabel"><span>调色预设</span><small>点击载入</small></div><div class="presets">
-          <button type="button" data-preset="cinema">电影绿金</button><button type="button" data-preset="sparkle">阳光闪耀</button><button type="button" data-preset="hdr">Smart HDR</button><button type="button" data-preset="portra">Portra 胶片</button><button type="button" data-preset="digicam">卡片机</button><button type="button" data-preset="alexa">ARRI 高端</button><button type="button" data-preset="blockbuster">大片海报</button><button type="button" data-preset="japanese">日系清透</button><button type="button" data-preset="hongkong">港风电影</button><button type="button" data-preset="korean">韩系写真</button><button type="button" data-preset="fuji">富士直出</button><button type="button" data-preset="cinestill">CineStill 夜景</button><button type="button" data-preset="polaroid">宝丽来</button><button type="button" data-preset="disposable">一次性胶片</button><button type="button" data-preset="cleanCommercial">商业干净</button><button type="button" data-preset="moodyForest">森林电影</button><button type="button" data-preset="summer">夏日清爽</button><button type="button" data-preset="nightFlash">夜晚直闪</button><button type="button" data-preset="vintageDV">复古 DV</button><button type="button" data-preset="food">美食摄影</button><button type="button" data-preset="product">产品摄影</button><button type="button" data-preset="portraitNatural">自然人像</button><button type="button" data-preset="blackGold">黑金电影</button>
-          </div></div>
+          <div class="presetBlock">
+            <div class="sectionLabel"><span>专业调色预设</span><small>先选模块，再选风格</small></div>
+            <div class="presetTabs" role="tablist" aria-label="调色预设模块">
+              <button type="button" class="active" role="tab" aria-selected="true" aria-controls="preset-portrait" data-preset-category="portrait">人物摄影</button>
+              <button type="button" role="tab" aria-selected="false" aria-controls="preset-story" data-preset-category="story">故事纪实</button>
+              <button type="button" role="tab" aria-selected="false" aria-controls="preset-nature" data-preset-category="nature">自然风光</button>
+              <button type="button" role="tab" aria-selected="false" aria-controls="preset-cinema" data-preset-category="cinema">电影观感</button>
+              <button type="button" role="tab" aria-selected="false" aria-controls="preset-youth" data-preset-category="youth">青春随拍</button>
+            </div>
+            <div id="preset-portrait" class="presets" role="tabpanel" data-preset-panel="portrait">
+              <button type="button" data-preset="portraitNatural">自然人像</button><button type="button" data-preset="korean">韩系写真</button><button type="button" data-preset="japanese">日系清透</button><button type="button" data-preset="editorialPortrait">杂志肖像</button><button type="button" data-preset="cinematicPortrait">电影肖像</button><button type="button" data-preset="studioBeauty">棚拍美学</button><button type="button" data-preset="goldenHourPortrait">黄金人像</button><button type="button" data-preset="lowKeyPortrait">低调肖像</button><button type="button" data-preset="softWindowPortrait">窗光人像</button><button type="button" data-preset="blackWhitePortrait">黑白肖像</button>
+            </div>
+            <div id="preset-story" class="presets" role="tabpanel" data-preset-panel="story" hidden>
+              <button type="button" data-preset="documentaryNeutral">纪实本色</button><button type="button" data-preset="streetStory">街头叙事</button><button type="button" data-preset="hongkong">港风纪实</button><button type="button" data-preset="nightFlash">夜间直闪</button><button type="button" data-preset="vintageDV">复古 DV</button><button type="button" data-preset="digicam">CCD 随拍</button><button type="button" data-preset="disposable">一次性胶片</button><button type="button" data-preset="polaroid">宝丽来</button><button type="button" data-preset="familyMemory">家庭记忆</button><button type="button" data-preset="travelDocumentary">旅行纪实</button>
+            </div>
+            <div id="preset-nature" class="presets" role="tabpanel" data-preset-panel="nature" hidden>
+              <button type="button" data-preset="landscapeNatural">自然风光</button><button type="button" data-preset="moodyForest">森林电影</button><button type="button" data-preset="summer">夏日清爽</button><button type="button" data-preset="goldenLandscape">金色时刻</button><button type="button" data-preset="blueHour">蓝调时刻</button><button type="button" data-preset="mountainClarity">山野通透</button><button type="button" data-preset="oceanTeal">海岸青蓝</button><button type="button" data-preset="autumnFilm">秋日胶片</button><button type="button" data-preset="snowMinimal">冰雪极简</button><button type="button" data-preset="nightLandscape">夜景风光</button>
+            </div>
+            <div id="preset-cinema" class="presets" role="tabpanel" data-preset-panel="cinema" hidden>
+              <button type="button" data-preset="cinema">电影绿金</button><button type="button" data-preset="alexa">ARRI 高端</button><button type="button" data-preset="blockbuster">大片海报</button><button type="button" data-preset="blackGold">黑金电影</button><button type="button" data-preset="cinestill">CineStill 夜景</button><button type="button" data-preset="portra">Portra 胶片</button><button type="button" data-preset="fuji">富士直出</button><button type="button" data-preset="tealOrange">青橙电影</button><button type="button" data-preset="noir">黑色电影</button><button type="button" data-preset="dreamFilm">梦境胶片</button>
+            </div>
+            <div id="preset-youth" class="presets" role="tabpanel" data-preset-panel="youth" hidden>
+              <button type="button" data-preset="freshYouth">青春清透</button><button type="button" data-preset="campus">校园日光</button><button type="button" data-preset="sparkle">阳光闪耀</button><button type="button" data-preset="hdr">Smart HDR</button><button type="button" data-preset="cleanCommercial">社交清亮</button><button type="button" data-preset="cafeDaily">咖啡日常</button><button type="button" data-preset="picnic">野餐暖调</button><button type="button" data-preset="cityPop">城市流行</button><button type="button" data-preset="pastelDaily">粉彩日常</button><button type="button" data-preset="partyFlash">派对直闪</button>
+            </div>
+          </div>
           <label>全局提示词<textarea id="prompt" name="prompt" rows="6"></textarea></label>
         </div>
         <label class="drop" for="imageInput"><input id="imageInput" name="images" type="file" accept="image/png,image/jpeg,image/webp" multiple /><span class="dropIcon">◇</span><strong>放入照片开始创作</strong><small>最多 10 张 · PNG / JPG / WEBP · 刷新后自动恢复</small><span id="selectedFiles">尚未选择照片</span></label>
@@ -43,6 +65,6 @@
   <dialog id="resetDialog" class="confirmDialog">
     <form method="dialog" class="glass"><span class="dialogMark">◇</span><h2>新建空白批次？</h2><p>当前照片、处理结果和任务记录都会从这个浏览器中清除。</p><div class="dialogActions"><button class="secondaryButton" value="cancel">取消</button><button class="dialogConfirm" value="confirm">清空并新建</button></div></form>
   </dialog>
-  <script src="/app.js?v=20260915-uuid"></script>
+  <script src="/app.js?v=20260915-presets"></script>
 </body>
 </html>

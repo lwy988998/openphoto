@@ -54,8 +54,10 @@ try {
   assert.match(studio, /id="photoGrid"/);
   assert.match(studio, /class="studioLayout"/);
   assert.match(studio, /id="resetDialog"/);
-  assert.match(studio, /20260915-upload/);
-  assert.match(studio, /20260915-uuid/);
+  assert.match(studio, /20260915-presets/);
+  assert.equal((studio.match(/data-preset-category=/g) || []).length, 5);
+  assert.equal((studio.match(/data-preset-panel=/g) || []).length, 5);
+  assert.equal((studio.match(/data-preset="/g) || []).length, 50);
   assert.doesNotMatch(studio, /accessPassword/);
 
   const access = await fetch(`http://127.0.0.1:${port}/api/access`);

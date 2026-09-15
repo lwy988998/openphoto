@@ -13,15 +13,42 @@ const presets = {
   cinestill: `CineStill 800T 夜景风格：钨丝灯暖色、冷色阴影、真实胶片颗粒与柔和反差；只在原图已有灯光边缘加入轻微红橙 halation，避免肤色过红或扩散成新光源。`,
   polaroid: `宝丽来即时成像质感：柔和清晰度、奶油高光、轻微褪色、温暖白平衡、浅颗粒和克制暗角，呈现自然生活化相纸观感；不额外添加相框。`,
   disposable: `一次性胶片快照：略高对比、轻微高光过曝、青绿色阴影、明显但细腻的颗粒与自然直闪观感；闪光只作用于原图已有受光关系，不新增红眼或反光。`,
-  cleanCommercial: `高端商业自然调色：校准白平衡与肤色，净化天空和植物色彩，提升阴影层次、局部对比、清晰度和通透感；避免过度 HDR、重滤镜与塑料肤质。`,
+  cleanCommercial: `社交清亮：轻微提亮、清洁背景杂色、自然肤色、通透阴影和适度鲜活色彩；保持手机直出的轻松感，不使用重滤镜。`,
   moodyForest: `森林电影感：深邃湿润的绿色、柔和冷阴影、温暖日光高光和细腻空气层次；肤色保持准确并隔离绿色污染，避免压暗过度或奇幻化。`,
   summer: `夏日清爽胶片：明亮自然光、清澈蓝色、鲜活但不过饱和的绿色、自然肤色、柔和高光和轻微颗粒，整体轻盈通透。`,
   nightFlash: `夜晚直闪相机质感：基于原图受光关系增强主体亮度，保持背景略暗、肤色真实、冷暖分离、轻微高光反射和细小噪点；避免舞台灯式强光。`,
   vintageDV: `复古 DV / 早期数码质感：轻微低动态范围、柔和锐度、细小数字噪点、微弱色散与克制高光溢出，色调可轻偏蓝绿或暖黄；不添加时间戳。`,
-  food: `美食商业摄影：使用温暖自然光与干净白平衡，增强食物固有色泽、纹理和油润高光，背景保持柔和；避免过饱和、假 HDR、塑料感或改变食物形状。`,
-  product: `高端产品摄影：校准材质本色和白平衡，增强真实边缘、柔和高光、自然阴影与高级对比；产品形状、包装图案、Logo 和可读文字必须保持准确。`,
   portraitNatural: `自然人像后期：准确肤色、柔和阴影、自然局部对比与克制眼神光，完整保留毛孔和皮肤纹理；避免过度磨皮、液化或美颜质感。`,
   blackGold: `黑金电影调色：干净深色背景、克制暖金高光、中性偏冷阴影和较强但保留细节的对比；肤色不发黄，暗部不压死，不新增光效。`,
+  editorialPortrait: `杂志肖像：中性精准肤色、雕塑感明暗、克制饱和度与利落层次；突出服装材质和面部轮廓，呈现高级时装编辑质感。`,
+  cinematicPortrait: `电影肖像：柔和肤色、冷暖分离、深邃透明的阴影与细腻高光滚降；加入极轻胶片颗粒，保持真实皮肤和情绪张力。`,
+  studioBeauty: `棚拍美学：纯净白平衡、通透肤色、平滑但有纹理的明暗过渡、干净背景色和精致高光；避免塑料磨皮和过度锐化。`,
+  goldenHourPortrait: `黄金人像：温暖但不过黄的肤色、蜂蜜色高光、柔和逆光层次与中性阴影；只增强原图已有暖光，保持自然空气感。`,
+  lowKeyPortrait: `低调肖像：压低环境亮度并保留暗部细节，以克制暖高光勾勒面部和轮廓；肤色准确、黑位干净，避免死黑。`,
+  softWindowPortrait: `窗光人像：柔和中性侧光、细腻肤色渐变、奶油高光和自然低对比；强调安静通透的室内氛围并保留皮肤纹理。`,
+  blackWhitePortrait: `黑白肖像：中性灰阶、清晰肤色明度分离、柔和高光和有层次的深黑；用克制颗粒增强经典银盐质感。`,
+  documentaryNeutral: `纪实本色：校准白平衡与曝光，恢复高光、阴影和现场固有色；保持自然对比与真实颗粒，不制造戏剧化光效。`,
+  streetStory: `街头叙事：稍强局部对比、克制饱和度、干净阴影和明确冷暖关系；保留城市环境色与瞬间感。`,
+  familyMemory: `家庭记忆：温暖中间调、柔和对比、自然肤色、轻微褪色与细腻颗粒；保留室内混合光的生活感。`,
+  travelDocumentary: `旅行纪实：准确环境色、通透空气层次、自然天空与植被、适度局部对比和轻微胶片颗粒；兼顾人物肤色与地点真实感。`,
+  landscapeNatural: `自然风光：校准天空、植被和岩石的固有色，恢复高光与暗部层次，增强空气透视和微对比；真实通透且不过饱和。`,
+  goldenLandscape: `金色时刻：增强原图已有暖阳、金色高光与长阴影层次，维持中性暗部和自然天空；避免整体泛黄或虚构光线。`,
+  blueHour: `蓝调时刻：深邃钴蓝天空、冷静环境色、克制暖灯对比、干净暗部和柔和高光；保持低照度现场的真实层次。`,
+  mountainClarity: `山野通透：增强远近层次、岩石纹理和清洁空气感，天空蓝与植被绿保持自然；对比清晰但不产生 HDR 光边。`,
+  oceanTeal: `海岸青蓝：准确分离海水青绿、天空蓝与沙滩暖色，增强水面高光和通透层次；避免荧光蓝绿和过度去雾。`,
+  autumnFilm: `秋日胶片：温暖琥珀叶色、克制红橙饱和度、柔和青灰阴影、宽容高光与细腻颗粒；不让画面整体染黄。`,
+  snowMinimal: `冰雪极简：准确雪地白平衡、干净冷白高光、淡蓝阴影和柔和层次；保留雪面纹理，避免偏紫与过曝。`,
+  nightLandscape: `夜景风光：压制色彩噪点，恢复灯光高光和建筑暗部，保持冷暖光源分离与清晰黑位；避免新增星芒和灯光。`,
+  tealOrange: `青橙电影：以克制青色阴影衬托自然暖肤色，保持中性高光、清晰黑位和稳重反差；避免橙脸与青色污染。`,
+  noir: `黑色电影：低饱和近黑白色调、硬朗但保留细节的明暗分区、深黑与银灰高光、极轻颗粒；不虚构烟雾光影。`,
+  dreamFilm: `梦境胶片：柔和粉紫高光、淡青阴影、低对比、轻微辉光和细腻颗粒；效果只作用于已有亮部，保持克制真实。`,
+  freshYouth: `青春清透：明亮曝光、干净白平衡、自然透亮肤色、清新蓝绿与柔和低对比；保留皮肤纹理和生活气息。`,
+  campus: `校园日光：自然晴日色温、清澈天空、柔和绿色、明亮肤色与轻微胶片颗粒；整体轻快但不过曝。`,
+  cafeDaily: `咖啡日常：温暖木色与奶油高光、柔和室内阴影、自然肤色和低强度颗粒；保留窗边混合光与安静氛围。`,
+  picnic: `野餐暖调：清新草地绿、柔和暖阳、自然肤色、浅色高光与轻微胶片颗粒；避免绿色染肤和整体橙黄。`,
+  cityPop: `城市流行：清亮蓝色、活力洋红点缀、干净高光和稍强对比，呈现现代街头青春感；色彩鲜明但不荧光。`,
+  pastelDaily: `粉彩日常：柔和粉、蓝、米色调，低对比奶油高光和清透阴影；保持肤色自然，不让画面发灰。`,
+  partyFlash: `派对直闪：依据原图光线增强干净直闪、明亮主体、深色背景、冷暖反差和细小噪点；不新增灯具或红眼。`,
 };
 
 const DB_NAME = 'openphoto-studio';
@@ -102,7 +129,7 @@ function restoreSettings() {
     const element = document.querySelector(`#${key}`);
     if (settings[key] && [...element.options].some(option => option.value === settings[key])) element.value = settings[key];
   }
-  promptInput.value = settings.prompt || presets.cinema;
+  promptInput.value = settings.prompt || presets.portraitNatural;
   document.querySelector('#upscale8k').checked = Boolean(settings.upscale8k);
 }
 
@@ -341,6 +368,16 @@ document.querySelectorAll('[data-preset]').forEach(button => button.addEventList
   promptInput.value = presets[button.dataset.preset];
   saveSettings();
   setMessage(`已载入“${button.textContent.trim()}”提示词。`);
+}));
+document.querySelectorAll('[data-preset-category]').forEach(tab => tab.addEventListener('click', () => {
+  document.querySelectorAll('[data-preset-category]').forEach(item => {
+    const selected = item === tab;
+    item.classList.toggle('active', selected);
+    item.setAttribute('aria-selected', String(selected));
+  });
+  document.querySelectorAll('[data-preset-panel]').forEach(panel => {
+    panel.hidden = panel.dataset.presetPanel !== tab.dataset.presetCategory;
+  });
 }));
 
 if (matchMedia('(hover: hover) and (pointer: fine)').matches) {
