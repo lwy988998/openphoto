@@ -74,6 +74,15 @@ function saveJson(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
+function createUuid() {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 const dbPromise = new Promise((resolve, reject) => {
   const request = indexedDB.open(DB_NAME, 1);
   request.onupgradeneeded = () => request.result.createObjectStore(STORE_NAME, { keyPath: 'imageId' });
@@ -282,7 +291,7 @@ async function pollJob(jobId) {
 
 async function submitJob(targetRecords, prompt) {
   if (!targetRecords.length) return;
-  const jobId = crypto.randomUUID();
+  const jobId = createUuid();
   jobs[jobId] = { imageIds: targetRecords.map(record => record.imageId) };
   saveJobs();
   setRecordStatus(jobs[jobId].imageIds, 'queued');
@@ -327,7 +336,7 @@ imageInput.addEventListener('change', async () => {
   const files = [...imageInput.files].filter(file => /^image\/(png|jpe?g|webp)$/i.test(file.type)).slice(0, 10);
   if (!files.length) return setMessage('没有读取到支持的照片，请选择 PNG、JPG 或 WEBP。', true);
   await resetBatch();
-  records = files.map((file, order) => ({ imageId: crypto.randomUUID(), order, name: file.name, type: file.type, lastModified: file.lastModified, file, prompt: '', resultBlob: null, resultUrl: '', status: 'ready', error: '' }));
+  records = files.map((file, order) => ({ imageId: createUuid(), order, name: file.name, type: file.type, lastModified: file.lastModified, file, prompt: '', resultBlob: null, resultUrl: '', status: 'ready', error: '' }));
   for (const record of records) await persist(record);
   renderCards();
   setMessage(`已保存 ${records.length} 张照片，刷新页面也不会丢失。`);
