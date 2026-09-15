@@ -51,6 +51,7 @@ try {
   assert.match(studio, /id="photoGrid"/);
   assert.match(studio, /class="studioLayout"/);
   assert.match(studio, /id="resetDialog"/);
+  assert.match(studio, /20260915-upload/);
   assert.doesNotMatch(studio, /accessPassword/);
 
   const access = await fetch(`http://127.0.0.1:${port}/api/access`);
