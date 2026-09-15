@@ -5,10 +5,13 @@ import { spawn } from 'node:child_process';
 
 const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 let upstreamCalls = 0;
+let upstreamBody = '';
 const upstream = http.createServer((req, res) => {
   upstreamCalls += 1;
-  req.resume();
+  const chunks = [];
+  req.on('data', chunk => chunks.push(chunk));
   req.on('end', () => setTimeout(() => {
+    upstreamBody = Buffer.concat(chunks).toString('utf8');
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ data: [{ b64_json: tinyPng }] }));
   }, 120));
@@ -77,7 +80,10 @@ try {
   assert.equal(job.items[0].imageId, imageId);
   assert.ok(job.items[0].result.image.startsWith('data:image/png;base64,'));
   assert.equal(upstreamCalls, 1);
-  console.log('SMOKE public=true idempotent=true mapped=true upstreamCalls=1');
+  assert.match(upstreamBody, /原图保真后期调色/);
+  assert.match(upstreamBody, /禁止新增、删除、替换、移动、重绘或重新生成/);
+  assert.match(upstreamBody, /<调色要求>自然调色<\/调色要求>/);
+  console.log('SMOKE public=true idempotent=true mapped=true promptLocked=true upstreamCalls=1');
 } finally {
   child.kill();
   upstream.close();
