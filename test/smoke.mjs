@@ -10,6 +10,7 @@ const changedPng = (await sharp({ create: { width: 16, height: 16, channels: 3, 
 let upstreamCalls = 0;
 const upstreamBodies = [];
 let changeDetails = false;
+let failDetails = false;
 const upstream = http.createServer((req, res) => {
   upstreamCalls += 1;
   const chunks = [];
@@ -17,6 +18,11 @@ const upstream = http.createServer((req, res) => {
   req.on('end', () => setTimeout(() => {
     const body = Buffer.concat(chunks).toString('utf8');
     upstreamBodies.push(body);
+    if (failDetails && body.includes('细节修复')) {
+      res.writeHead(502, { 'content-type': 'text/html' });
+      res.end('<!DOCTYPE html><title>Bad gateway</title>');
+      return;
+    }
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ data: [{ b64_json: changeDetails && body.includes('细节修复') ? changedPng : testPng }] }));
   }, 120));
@@ -131,7 +137,23 @@ try {
   assert.match(rejectedJob.items[0].error, /差异过大/);
   assert.equal(rejectedJob.items[0].result, undefined);
   assert.equal(upstreamCalls, 5);
-  console.log('SMOKE public=true idempotent=true mapped=true promptLocked=true ai8k=true rejectChanged=true upstreamCalls=5');
+  changeDetails = false;
+  failDetails = true;
+  const failedId = randomUUID();
+  const failed = await fetch(`http://127.0.0.1:${port}/api/batch`, {
+    method: 'POST', body: makeBody(failedId, randomUUID(), true),
+  });
+  assert.equal(failed.status, 202);
+  let failedJob;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    failedJob = await fetch(`http://127.0.0.1:${port}/api/batch/${failedId}`).then(response => response.json()).then(data => data.job);
+    if (failedJob.status !== 'processing' && failedJob.status !== 'queued') break;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.equal(failedJob.status, 'completed_with_errors');
+  assert.equal(failedJob.items[0].error, '上游请求失败：HTTP 502');
+  assert.equal(upstreamCalls, 7);
+  console.log('SMOKE public=true idempotent=true mapped=true promptLocked=true ai8k=true rejectChanged=true upstream502=true upstreamCalls=7');
 } finally {
   child.kill();
   upstream.close();

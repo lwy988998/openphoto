@@ -113,7 +113,7 @@ async function requestEdit(buffer, mime, name, prompt, { apiKey, model, size, qu
   const text = await response.text();
   let data;
   try { data = JSON.parse(text); } catch { data = { raw: text }; }
-  if (!response.ok) throw new Error(data?.error?.message || data?.raw || `上游请求失败：HTTP ${response.status}`);
+  if (!response.ok) throw new Error(data?.error?.message || (data?.raw && !data.raw.trimStart().startsWith('<') ? data.raw.slice(0, 300) : '') || `上游请求失败：HTTP ${response.status}`);
   const image = data?.data?.[0];
   if (!image?.b64_json && !image?.url) throw new Error('上游没有返回图片。');
   return { image, usage: data.usage || null };
