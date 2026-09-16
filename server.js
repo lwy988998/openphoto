@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { gradeSource, makeMontage } from './reference-grade.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -213,6 +214,40 @@ async function editOne(file, options) {
     upscale: { ...upscaled.metadata, aiEnhanced: true }, usage: first.usage };
 }
 
+async function referenceOne(file, { apiKey, reference, strength, upscale8k }) {
+  const sourceMeta = await sharp(file.buffer).metadata();
+  const format = sourceMeta.format === 'jpeg' ? 'jpeg' : sourceMeta.format === 'webp' ? 'webp' : 'png';
+  const montage = await makeMontage(file.buffer, reference);
+  const prompt = [
+    '输入图像左侧是 SOURCE PHOTO 原图，右侧是 REFERENCE 参考图。',
+    '仅分析右侧参考图的摄影调色：暗部、中间调、高光的色彩、对比度和色温。',
+    '只输出左侧原图的完整画面，构图、主体、物体、文字和边界保持原样；不输出拼图、标签或右侧参考图的内容。',
+    '只把参考图的色调与明暗气氛用于左侧原图，不改变左侧原图的拍摄内容。',
+  ].join('\n');
+  const candidate = await requestEdit(montage, 'image/png', 'source-and-reference.png', prompt,
+    { apiKey, model: 'gpt-image-2.5-sunburst', size: 'auto', quality: 'high', outputFormat: 'png' });
+  if (!candidate.image.b64_json) throw new Error('参考调色需要上游返回图片数据。');
+  const candidateBytes = Buffer.from(candidate.image.b64_json, 'base64');
+  // 与 8K 大图处理共用串行队列，避免多张高像素原图同时展开到内存。
+  const gradeTask = upscaleQueue.then(() => gradeSource(file.buffer, candidateBytes, strength, upscale8k ? 'png' : format));
+  upscaleQueue = gradeTask.then(() => {}, () => {});
+  const graded = await gradeTask;
+  if (!upscale8k) return { image: `data:image/${format};base64,${graded.toString('base64')}`, outputFormat: format, upscale: null, usage: candidate.usage };
+
+  const detail = await requestEdit(graded, 'image/png', 'graded.png', detailPrompt,
+    { apiKey, model: 'gpt-image-2.5-sunburst', size: 'auto', quality: 'high', outputFormat: 'png' });
+  if (!detail.image.b64_json) throw new Error('8K AI 细节增强没有返回图片数据。');
+  // 与普通 8K 路径共用大图串行队列，避免并发占满内存。
+  const result = upscaleQueue.then(async () => {
+    const merged = await blendAiDetails(graded, Buffer.from(detail.image.b64_json, 'base64'));
+    return upscaleTo8K(`data:image/png;base64,${merged.toString('base64')}`, sourceMeta.hasAlpha ? 'png' : 'jpeg');
+  });
+  upscaleQueue = result.then(() => {}, () => {});
+  const upscaled = await result;
+  const outputFormat = upscaled.image.match(/^data:image\/([^;]+)/)?.[1] || 'png';
+  return { image: upscaled.image, outputFormat, upscale: { ...upscaled.metadata, aiEnhanced: true }, usage: candidate.usage };
+}
+
 function safeJob(job) {
   return { id: job.id, status: job.status, total: job.items.length, completed: job.items.filter(x => x.status === 'completed').length, failed: job.items.filter(x => x.status === 'failed').length, items: job.items.map(({ file, ...item }) => item) };
 }
@@ -222,7 +257,7 @@ async function runJob(job, options) {
   for (const item of job.items) {
     if (job.status === 'cancelled') break;
     item.status = 'processing';
-    try { item.result = await editOne(item.file, options); item.status = 'completed'; }
+    try { item.result = await (options.reference ? referenceOne(item.file, options) : editOne(item.file, options)); item.status = 'completed'; }
     catch (err) { item.status = 'failed'; item.error = err?.name === 'AbortError' ? '上游处理超过 115 秒，请稍后重试。' : (err.message || '处理失败'); }
     item.file = null;
   }
@@ -274,6 +309,44 @@ app.post('/api/batch', upload.array('images', 10), async (req, res) => {
           item.file = null;
         }
       }
+      setTimeout(() => jobs.delete(job.id), jobTtlMs).unref();
+    });
+    res.status(202).json({ job: safeJob(job) });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || '服务器处理失败' });
+  }
+});
+
+app.post('/api/reference', upload.fields([{ name: 'source', maxCount: 1 }, { name: 'reference', maxCount: 1 }]), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const jobId = String(body.jobId || '').trim();
+    const imageId = String(body.imageId || '').trim();
+    const strength = Number(body.strength ?? 70);
+    if (!uuidPattern.test(jobId) || !uuidPattern.test(imageId)) return res.status(400).json({ error: 'jobId 和 imageId 必须是有效 UUID。' });
+    if (jobs.has(jobId)) return res.status(202).json({ job: safeJob(jobs.get(jobId)) });
+    const source = req.files?.source?.[0];
+    const reference = req.files?.reference?.[0];
+    if (!source || !reference) return res.status(400).json({ error: '请分别上传一张原图和参考图。' });
+    if (!Number.isInteger(strength) || strength < 0 || strength > 100) return res.status(400).json({ error: '调色强度应为 0 到 100。' });
+    if (jobs.size >= 20) return res.status(429).json({ error: '当前任务较多，请稍后重试。' });
+    const apiKey = configuredKey() || String(body.temporaryApiKey || '').trim();
+    if (!apiKey) return res.status(503).json({ error: 'OPENAI_API_KEY 未配置。' });
+    for (const file of [source, reference]) {
+      let metadata;
+      try { metadata = await sharp(file.buffer).metadata(); } catch { return res.status(400).json({ error: '图片内容损坏或格式无效。' }); }
+      if (!['png', 'jpeg', 'webp'].includes(metadata.format) || !metadata.width || !metadata.height || metadata.width * metadata.height > 40_000_000) {
+        return res.status(400).json({ error: '只支持不超过 4000 万像素的 PNG、JPG、WEBP 图片。' });
+      }
+    }
+    const job = { id: jobId, status: 'queued', items: [{ index: 0, imageId, name: source.originalname, status: 'queued', file: source }] };
+    jobs.set(jobId, job);
+    runJob(job, { apiKey, reference: reference.buffer, strength,
+      upscale8k: String(body.upscale8k || '') === 'on' || String(body.upscale8k || '') === 'true' }).catch(err => {
+      job.status = 'completed_with_errors';
+      job.items[0].status = 'failed';
+      job.items[0].error = err?.message || '后台任务失败';
+      job.items[0].file = null;
       setTimeout(() => jobs.delete(job.id), jobTtlMs).unref();
     });
     res.status(202).json({ job: safeJob(job) });

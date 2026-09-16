@@ -59,12 +59,21 @@ try {
 
   const root = await fetch(`http://127.0.0.1:${port}/`).then(response => response.text());
   const studio = await fetch(`http://127.0.0.1:${port}/studio.html`).then(response => response.text());
+  const referencePage = await fetch(`http://127.0.0.1:${port}/reference.html`).then(response => response.text());
+  const referenceScript = await fetch(`http://127.0.0.1:${port}/reference.js`).then(response => response.text());
   const appScript = await fetch(`http://127.0.0.1:${port}/app.js`).then(response => response.text());
   assert.match(root, /class="landingWordmark">Openphoto/);
   assert.match(root, /href="\/studio\.html">开始/);
   assert.match(root, /class="landingPage prismPage"/);
   assert.doesNotMatch(root, /accessPassword/);
   assert.match(studio, /id="photoGrid"/);
+  assert.match(studio, /href="\/reference\.html"/);
+  assert.match(referencePage, /id="sourceInput"/);
+  assert.match(referencePage, /id="referenceInput"/);
+  assert.match(referencePage, /id="resultPreview"/);
+  assert.match(referencePage, /id="upscale8k"/);
+  assert.match(referenceScript, /openphoto-reference/);
+  assert.match(referenceScript, /openphoto\.reference\.job/);
   assert.match(studio, /class="studioLayout"/);
   assert.match(studio, /id="resetDialog"/);
   assert.match(studio, /20260915-presets/);

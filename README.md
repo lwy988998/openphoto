@@ -10,6 +10,7 @@
 - 全局提示词批量处理，单图可改提示词后重新处理
 - IndexedDB 保存当前批次，刷新后恢复原图、结果和任务轮询
 - 服务端代理 API Key；可选 AI 细节增强，再输出长边 7680 像素的 8K 图片
+- 独立 `/reference.html` 单张参考调色工作台：上传原图及参考图，AI 读取参考风格，仅将暗部、中间调、高光的色彩映射回原图像素；可调强度、刷新恢复和可选 8K
 
 8K 选项会额外调用一次图像编辑模型，费用和处理时间因此增加。服务端只融合 AI 生成的局部高频细节，保留调色结果的构图、低频明暗和透明度；两次结果差异过大时任务失败，不会静默退回普通插值。最终 8K 尺寸仍包含插值，不能凭空恢复原图中没有的真实信息。
 
@@ -22,6 +23,7 @@ npm start
 ```
 
 默认监听 `39006` 端口。访问 `/` 进入欢迎页，点击“开始”进入 `/studio.html`。
+在原工作台点击“参考图调色”进入独立页面；该页面的原图、参考图和结果保存在独立的浏览器 IndexedDB，不会清除多图工作台的数据。
 
 ## 服务器配置
 
@@ -40,6 +42,9 @@ systemctl restart openphoto-ai-color
 - `GET /api/status`：服务状态
 - `POST /api/batch`：提交批量或单图任务
 - `GET /api/batch/:id`：查询任务状态与结果
+- `POST /api/reference`：提交单张原图及参考图；沿用 `GET /api/batch/:id` 查询任务
+
+`POST /api/reference` 使用 multipart 字段 `source`、`reference`（各一张 PNG/JPG/WEBP，最大 20 MB）、`jobId`、`imageId`（UUID）、`strength`（0–100，默认 70）、`upscale8k`。相同 `jobId` 不重复处理。服务端不直接采用 AI 生成的场景内容作为成品，而是对原图像素作分明暗区域的色彩映射；8K 开关会额外调用一次 AI 修复细节。
 
 `POST /api/batch` 使用 multipart 字段：
 
