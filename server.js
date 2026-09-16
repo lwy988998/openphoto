@@ -12,6 +12,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const port = Number(process.env.PORT || 39006);
 const jobs = new Map();
+let upscaleQueue = Promise.resolve();
 const jobTtlMs = 30 * 60 * 1000;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const allowedModels = new Set(['gpt-image-2.5-sunburst', 'gpt-image-2.5-flare', 'gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini']);
@@ -88,6 +89,61 @@ function buildPrompt(userPrompt) {
   ].join('\n');
 }
 
+const detailPrompt = [
+  '这是对同一张照片的细节修复，不是重新生成或重新调色。',
+  '锁定主体身份、五官、文字、物体、轮廓、构图、色彩、光线和背景；禁止新增、删除、替换或移动任何内容。',
+  '只修复压缩损伤、轻微噪点和已有纹理的清晰度；未知细节保持原样，不凭空补造纹理。',
+  '若细节修复与原图一致性冲突，优先保留原图。',
+].join('\n');
+
+async function requestEdit(buffer, mime, name, prompt, { apiKey, model, size, quality, outputFormat }) {
+  const form = new FormData();
+  form.append('model', model);
+  form.append('prompt', prompt);
+  form.append('image', new Blob([buffer], { type: mime }), name);
+  form.append('n', '1');
+  form.append('size', size);
+  form.append('quality', quality);
+  form.append('output_format', outputFormat);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 115000);
+  const response = await fetch(`${configuredBaseUrl()}/images/edits`, {
+    method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form, signal: controller.signal,
+  }).finally(() => clearTimeout(timer));
+  const text = await response.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = { raw: text }; }
+  if (!response.ok) throw new Error(data?.error?.message || data?.raw || `上游请求失败：HTTP ${response.status}`);
+  const image = data?.data?.[0];
+  if (!image?.b64_json && !image?.url) throw new Error('上游没有返回图片。');
+  return { image, usage: data.usage || null };
+}
+
+async function blendAiDetails(base, enhanced) {
+  const { width, height } = await sharp(base).metadata();
+  if (!width || !height) throw new Error('无法读取调色结果尺寸。');
+  const [baseSmall, enhancedSmall] = await Promise.all([base, enhanced].map(buffer =>
+    sharp(buffer).resize(64, 64, { fit: 'fill' }).greyscale().raw().toBuffer()));
+  const difference = baseSmall.reduce((sum, value, index) => sum + Math.abs(value - enhancedSmall[index]), 0) / baseSmall.length;
+  if (difference > 30) throw new Error('AI 细节增强与原图差异过大，已取消 8K 输出，请保持原图并重试。');
+
+  const [source, sourceBlur, details, detailsBlur] = await Promise.all([
+    sharp(base).ensureAlpha().raw().toBuffer(),
+    sharp(base).blur(1.4).removeAlpha().raw().toBuffer(),
+    sharp(enhanced).resize(width, height, { fit: 'fill' }).removeAlpha().raw().toBuffer(),
+    sharp(enhanced).resize(width, height, { fit: 'fill' }).blur(1.4).removeAlpha().raw().toBuffer(),
+  ]);
+  for (let pixel = 0; pixel < width * height; pixel += 1) {
+    for (let channel = 0; channel < 3; channel += 1) {
+      const index = pixel * 3 + channel;
+      const current = pixel * 4 + channel;
+      const delta = (details[index] - detailsBlur[index]) - (source[current] - sourceBlur[index]);
+      source[current] = Math.max(0, Math.min(255, Math.round(source[current] + delta * 0.6)));
+    }
+  }
+  return sharp(source, { raw: { width, height, channels: 4 } }).png().toBuffer();
+}
+
 async function upscaleTo8K(dataUrl, outputFormat) {
   const match = dataUrl.match(/^data:image\/[a-z0-9.+-]+;base64,(.+)$/i);
   if (!match) return { image: dataUrl, metadata: null };
@@ -133,29 +189,28 @@ async function upscaleTo8K(dataUrl, outputFormat) {
 async function editOne(file, options) {
   const { apiKey, model, upscale8k, quality, size, requestOutputFormat, prompt } = options;
   const responseOutputFormat = upscale8k ? 'jpeg' : requestOutputFormat;
-  const form = new FormData();
-  form.append('model', model);
-  form.append('prompt', prompt);
-  form.append('image', new Blob([file.buffer], { type: file.mimetype || 'image/png' }), file.originalname || 'input.png');
-  form.append('n', '1');
-  form.append('size', size);
-  form.append('quality', quality);
-  form.append('output_format', requestOutputFormat);
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 115000);
-  const response = await fetch(`${configuredBaseUrl()}/images/edits`, {
-    method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form, signal: controller.signal,
-  }).finally(() => clearTimeout(timer));
-  const text = await response.text();
-  let data;
-  try { data = JSON.parse(text); } catch { data = { raw: text }; }
-  if (!response.ok) throw new Error(data?.error?.message || data?.raw || `上游请求失败：HTTP ${response.status}`);
-  const image = data?.data?.[0];
-  if (!image?.b64_json && !image?.url) throw new Error('上游没有返回图片。');
-  const editedImage = image.b64_json ? `data:image/${requestOutputFormat};base64,${image.b64_json}` : image.url;
-  const upscaled = upscale8k && editedImage.startsWith('data:image/') ? await upscaleTo8K(editedImage, responseOutputFormat) : { image: editedImage, metadata: null };
-  return { image: upscaled.image, outputFormat: responseOutputFormat, upscale: upscaled.metadata, usage: data.usage || null };
+  const firstFormat = upscale8k ? 'png' : requestOutputFormat;
+  const first = await requestEdit(file.buffer, file.mimetype || 'image/png', file.originalname || 'input.png', prompt,
+    { apiKey, model, size, quality, outputFormat: firstFormat });
+  if (!upscale8k) {
+    return { image: first.image.b64_json ? `data:image/${firstFormat};base64,${first.image.b64_json}` : first.image.url,
+      outputFormat: firstFormat, upscale: null, usage: first.usage };
+  }
+  if (!first.image.b64_json) throw new Error('8K AI 增强需要上游返回图片数据，当前仅返回链接。');
+  const base = Buffer.from(first.image.b64_json, 'base64');
+  const second = await requestEdit(base, 'image/png', 'detail.png', detailPrompt,
+    { apiKey, model, size, quality: 'high', outputFormat: 'png' });
+  if (!second.image.b64_json) throw new Error('8K AI 细节增强没有返回图片数据。');
+  // 串行执行大图合成，避免并发任务同时占满服务器内存。
+  const result = upscaleQueue.then(async () => {
+    const merged = await blendAiDetails(base, Buffer.from(second.image.b64_json, 'base64'));
+    return upscaleTo8K(`data:image/png;base64,${merged.toString('base64')}`, responseOutputFormat);
+  });
+  upscaleQueue = result.then(() => {}, () => {});
+  const upscaled = await result;
+  const actualFormat = upscaled.image.match(/^data:image\/([^;]+)/)?.[1] || responseOutputFormat;
+  return { image: upscaled.image, outputFormat: actualFormat,
+    upscale: { ...upscaled.metadata, aiEnhanced: true }, usage: first.usage };
 }
 
 function safeJob(job) {
