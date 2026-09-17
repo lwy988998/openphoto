@@ -23,3 +23,18 @@
 @media (max-width: 1080px) { .referencePage .studioLayout { grid-template-columns: 1fr; } .referencePreviews { grid-template-columns: repeat(3, minmax(0, 1fr)); } .referenceViewport { height: 280px; } }
 @media (max-width: 700px) { .referencePreviews { grid-template-columns: 1fr; } .referenceViewport { height: 260px; } }
 @media (max-width: 460px) { .referenceUploads { grid-template-columns: 1fr; } .referenceUploads .drop { padding: 16px; } }
+@media (max-width: 620px) {
+  .referenceHint { font-size: 13px; }
+  .referenceUploads, .referencePreviews { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .referenceUploads .drop { min-height: 128px; padding: 10px 6px; gap: 5px; }
+  .referenceUploads .dropIcon { width: 32px; height: 32px; font-size: 17px; }
+  .referenceUploads .drop strong { font-size: 13px; }
+  .referenceUploads .drop small, .selectedName { font-size: 11px; }
+  .referencePreviews .imagePane { padding: 7px; border-radius: 17px; }
+  .referencePreviews .imagePane:last-child { grid-column: 1/-1; }
+  .referenceViewport { height: clamp(112px, 36vw, 170px); }
+  .referencePreviews .imagePane:last-child .referenceViewport { height: clamp(200px, 62vw, 300px); }
+  .imageLabel { letter-spacing: .04em; font-size: 10px; }
+  .strengthControl input { height: 36px; padding: 0; touch-action: pan-x; }
+  .referenceActions .cardButton, .referenceActions button { flex: 1 1 auto; min-height: 44px; text-align: center; }
+}

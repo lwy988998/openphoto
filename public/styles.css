@@ -255,15 +255,27 @@ textarea { resize: vertical; line-height: 1.52; }
   .featureToggle { grid-column: auto; }
 }
 @media (max-width: 620px) {
-  .studioShell { width: min(100% - 24px, 1480px); padding-top: 12px; }
-  .studioBar { grid-template-columns: 1fr auto; border-radius: 22px; }
-  .studioBar h1 { order: 3; grid-column: 1/-1; margin-top: 3px; text-align: center; }
-  .status { max-width: 170px; }
+  .studioShell { width: calc(100% - 20px); padding-top: 10px; }
+  .studioBar { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 12px; border-radius: 22px; }
+  .studioBar h1 { order: 0; grid-column: 1; font-size: 16px; }
+  .studioBar .status { order: 1; grid-column: 2; max-width: 120px; padding: 8px 10px; font-size: 11px; }
+  .studioBar .workspaceLinks, .studioBar > .backLink { order: 2; grid-column: 1/-1; }
+  .workspaceLinks { flex-wrap: nowrap; }
+  .workspaceLinks .backLink, .studioBar > .backLink, .workspaceLinks .secondaryButton { display: inline-flex; align-items: center; min-height: 44px; padding: 9px 12px; border-radius: 999px; font-size: 12px; }
+  .workspaceLinks .backLink, .studioBar > .backLink { border: 1px solid var(--line-soft); background: rgba(255,255,255,.035); }
   .settings { padding: 14px; border-radius: 23px; }
   .sectionHeading { align-items: flex-start; }
+  .sectionHeading h2 { font-size: 16px; }
   .compactSettings { grid-template-columns: 1fr; }
   .photoGrid { grid-template-columns: 1fr; }
-  .imagePane img, .resultPlaceholder { height: 250px; }
+  .photoCard { padding: 12px; }
+  .imagePane img, .resultPlaceholder { height: clamp(190px, 55vw, 250px); }
+  select, input:not([type="checkbox"]):not([type="file"]):not([type="range"]), textarea { min-height: 44px; font-size: 16px; }
+  .presetTabs button, .presets button, .secondaryButton, .cardButton, .dialogActions button { min-height: 44px; font-size: 12px; }
+  .drop { min-height: 116px; }
+  .featureToggle { min-height: 56px; }
+  .featureToggle small, .drop small { font-size: 11px; line-height: 1.4; }
+  .submitButton { min-height: 52px; }
   .landingWordmark { max-width: 100%; font-size: clamp(48px, 14vw, 76px); }
   .ambient-one, .ambient-two { width: 72vw; height: 72vw; }
 }
