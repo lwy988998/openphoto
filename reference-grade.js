@@ -4,13 +4,13 @@ const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const luminance = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
 
 export async function makeMontage(source, reference) {
-  const tile = async image => sharp(image).rotate().resize(768, 768, {
+  const tile = async image => sharp(image).rotate().resize(512, 512, {
     fit: 'contain', background: '#222222',
   }).flatten({ background: '#222222' }).png().toBuffer();
   const [left, right] = await Promise.all([tile(source), tile(reference)]);
-  const labels = Buffer.from('<svg width="1536" height="64"><rect width="1536" height="64" fill="#222"/><text x="24" y="43" fill="white" font-size="28">SOURCE PHOTO — keep content</text><text x="792" y="43" fill="white" font-size="28">REFERENCE — colors only</text></svg>');
-  return sharp({ create: { width: 1536, height: 832, channels: 3, background: '#222222' } })
-    .composite([{ input: labels, left: 0, top: 0 }, { input: left, left: 0, top: 64 }, { input: right, left: 768, top: 64 }])
+  const labels = Buffer.from('<svg width="1024" height="64"><rect width="1024" height="64" fill="#222"/><text x="24" y="43" fill="white" font-size="26">SOURCE PHOTO — keep content</text><text x="536" y="43" fill="white" font-size="26">REFERENCE — colors only</text></svg>');
+  return sharp({ create: { width: 1024, height: 576, channels: 3, background: '#222222' } })
+    .composite([{ input: labels, left: 0, top: 0 }, { input: left, left: 0, top: 64 }, { input: right, left: 512, top: 64 }])
     .png().toBuffer();
 }
 
