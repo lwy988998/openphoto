@@ -18,29 +18,30 @@
     <div class="studioLayout">
       <form id="referenceForm" class="settings glass hairline">
         <div class="sectionHeading"><div><span class="step">01</span><h2>选择两张照片</h2></div><button class="secondaryButton" id="clearReference" type="button">清空</button></div>
-        <p class="referenceHint">上传一张原图和一张参考图。AI 读取参考图的调色风格，成品只从原图像素生成，不复制参考图中的人物或物体。</p>
+        <p class="referenceHint">上传一张原图和一张参考图。AI 读取参考图的整体影像氛围：色彩、光影、柔焦、动感与颗粒。成品仍由原图像素制作。</p>
         <div class="referenceUploads">
           <label class="drop" for="sourceInput"><input id="sourceInput" type="file" accept="image/png,image/jpeg,image/webp" /><span class="dropIcon">◇</span><strong>上传原图</strong><small>只选一张你拍摄的照片</small><span id="sourceName" class="selectedName">尚未选择</span></label>
           <label class="drop" for="referenceInput"><input id="referenceInput" type="file" accept="image/png,image/jpeg,image/webp" /><span class="dropIcon">✦</span><strong>上传参考图</strong><small>电影截图或喜欢的色彩风格</small><span id="referenceName" class="selectedName">尚未选择</span></label>
         </div>
-        <label class="strengthControl" for="strength"><span>调色强度 <output id="strengthValue" for="strength">70%</output></span><input id="strength" name="strength" type="range" min="0" max="100" value="70" /><small>0% 保持原图色彩，100% 更接近参考图</small></label>
+        <label class="strengthControl" for="strength"><span>风格强度 <output id="strengthValue" for="strength">70%</output></span><input id="strength" name="strength" type="range" min="0" max="100" value="70" /><small>0% 保持原图，100% 更接近参考图的整体氛围</small></label>
         <label class="featureToggle"><input id="upscale8k" type="checkbox" /><span><strong>AI 细节增强 · 8K</strong><small>额外一次 AI 调用；局部纹理可能轻微变化</small></span></label>
         <details class="advanced"><summary>高级：临时 API Key</summary><p>只随本次请求发送，不保存到浏览器。</p><input id="temporaryApiKey" type="password" autocomplete="off" placeholder="sk-…" /></details>
-        <button id="referenceSubmit" class="submitButton" type="submit"><span>开始参考调色</span><small>Color match</small></button>
+        <button id="referenceSubmit" class="submitButton" type="submit"><span>开始氛围迁移</span><small>Mood match</small></button>
         <p class="message" id="message" aria-live="polite"></p>
       </form>
       <section class="resultsSection">
         <div class="sectionHeading"><div><span class="step">02</span><h2>原图、参考与结果</h2></div><span id="jobStatus" class="status">等待上传</span></div>
         <div class="referencePreviews">
           <div class="imagePane glass"><span class="imageLabel">原图 · 内容保留</span><div class="referenceViewport"><img id="sourcePreview" alt="原图预览" hidden /><span id="sourcePlaceholder">等待原图</span></div></div>
-          <div class="imagePane glass"><span class="imageLabel">参考图 · 只提取色调</span><div class="referenceViewport"><img id="referencePreview" alt="参考图预览" hidden /><span id="referencePlaceholder">等待参考图</span></div></div>
-          <div class="imagePane glass"><span class="imageLabel">调色结果</span><div class="referenceViewport"><img id="resultPreview" alt="参考调色结果" hidden /><span id="resultPlaceholder">处理完成后在这里显示</span></div></div>
+          <div class="imagePane glass"><span class="imageLabel">参考图 · 提取整体氛围</span><div class="referenceViewport"><img id="referencePreview" alt="参考图预览" hidden /><span id="referencePlaceholder">等待参考图</span></div></div>
+          <div class="imagePane glass"><span class="imageLabel">氛围迁移结果</span><div class="referenceViewport"><img id="resultPreview" alt="氛围迁移结果" hidden /><span id="resultPlaceholder">处理完成后在这里显示</span></div></div>
         </div>
+        <p class="referenceHint" id="styleSignals" aria-live="polite">处理完成后显示识别到的影像特征。</p>
         <div class="referenceActions"><a id="downloadResult" class="cardButton primary" aria-disabled="true">单独下载结果</a><button id="reprocess" type="button" class="secondaryButton" disabled>重新处理</button></div>
       </section>
     </div>
   </main>
   <dialog id="clearDialog" class="confirmDialog"><form method="dialog" class="glass"><span class="dialogMark">◇</span><h2>清空参考调色？</h2><p>原图、参考图、结果和任务记录将从这个浏览器中清除，不影响多图工作台。</p><div class="dialogActions"><button class="secondaryButton" value="cancel">取消</button><button class="dialogConfirm" value="confirm">确认清空</button></div></form></dialog>
-  <script src="/reference.js?v=20260916-reference"></script>
+  <script src="/reference.js?v=20260917-atmosphere"></script>
 </body>
 </html>

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { gradeSource, makeMontage } from './reference-grade.js';
+import { analyzeAtmosphere, applyAtmosphere, gradeSource, makeMontage, makeStyleChart } from './reference-grade.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -214,37 +214,60 @@ async function editOne(file, options) {
     upscale: { ...upscaled.metadata, aiEnhanced: true }, usage: first.usage };
 }
 
-async function referenceOne(file, { apiKey, reference, strength, upscale8k }) {
+async function referenceOne(file, { apiKey, reference, strength, upscale8k, onStage }) {
   const sourceMeta = await sharp(file.buffer).metadata();
   const format = sourceMeta.format === 'jpeg' ? 'jpeg' : sourceMeta.format === 'webp' ? 'webp' : 'png';
-  const montage = await makeMontage(file.buffer, reference);
-  const prompt = 'Left SOURCE PHOTO is source. Right REFERENCE is color palette only. Return the left photo with reference colors. Keep contents.';
-  const candidate = await requestEdit(montage, 'image/png', 'source-and-reference.png', prompt,
-    { apiKey, model: 'gpt-image-2.5-sunburst', size: 'auto', quality: 'high', outputFormat: 'png' });
-  if (!candidate.image.b64_json) throw new Error('参考调色需要上游返回图片数据。');
-  const candidateBytes = Buffer.from(candidate.image.b64_json, 'base64');
-  // 与 8K 大图处理共用串行队列，避免多张高像素原图同时展开到内存。
-  const gradeTask = upscaleQueue.then(() => gradeSource(file.buffer, candidateBytes, strength, upscale8k ? 'png' : format));
-  upscaleQueue = gradeTask.then(() => {}, () => {});
-  const graded = await gradeTask;
-  if (!upscale8k) return { image: `data:image/${format};base64,${graded.toString('base64')}`, outputFormat: format, upscale: null, usage: candidate.usage };
+  if (strength === 0 && !upscale8k) return { image: `data:image/${format};base64,${file.buffer.toString('base64')}`, outputFormat: format, upscale: null, usage: null, styleSignals: ['原图保留'] };
+  let graded, profile = { softness: 0, grain: 0, glow: 0, motion: 0, signals: ['原图保留'] }, usage = null;
+  if (strength > 0) {
+    onStage('analyzing');
+    const chart = await makeStyleChart();
+    const sample = await requestEdit(await makeMontage(chart, reference), 'image/png', 'style-chart-and-reference.png',
+      'Left SOURCE PHOTO is a neutral test scene. Right REFERENCE defines the photographic feel. Return only the left scene with right light, softness, grain, glow and motion. Keep its objects.',
+      { apiKey, model: 'gpt-image-2.5-sunburst', size: 'auto', quality: 'high', outputFormat: 'png' });
+    if (!sample.image.b64_json) throw new Error('参考氛围分析没有返回图片数据。');
+    onStage('matching');
+    const candidate = await requestEdit(await makeMontage(file.buffer, reference), 'image/png', 'source-and-reference.png',
+      'Left SOURCE PHOTO is source. Right REFERENCE is style. Return left photo with reference light, color and texture. Keep contents.',
+      { apiKey, model: 'gpt-image-2.5-sunburst', size: 'auto', quality: 'high', outputFormat: 'png' });
+    if (!candidate.image.b64_json) throw new Error('参考氛围迁移没有返回图片数据。');
+    onStage('finalizing');
+    const sampleBytes = Buffer.from(sample.image.b64_json, 'base64');
+    const candidateBytes = Buffer.from(candidate.image.b64_json, 'base64');
+    profile = await analyzeAtmosphere(reference, sampleBytes, chart);
+    usage = candidate.usage;
+    // 大图像素处理串行运行，避免并发占满内存。
+    const gradeTask = upscaleQueue.then(() => gradeSource(file.buffer, candidateBytes, strength, 'png'));
+    upscaleQueue = gradeTask.then(() => {}, () => {});
+    graded = await gradeTask;
+  } else graded = await sharp(file.buffer).rotate().png().toBuffer();
+  if (!upscale8k) {
+    const result = upscaleQueue.then(() => applyAtmosphere(graded, profile, strength, format));
+    upscaleQueue = result.then(() => {}, () => {});
+    const output = await result;
+    return { image: `data:image/${format};base64,${output.toString('base64')}`, outputFormat: format, upscale: null, usage, styleSignals: profile.signals };
+  }
 
+  onStage('finalizing');
   const detail = await requestEdit(graded, 'image/png', 'graded.png', detailPrompt,
     { apiKey, model: 'gpt-image-2.5-sunburst', size: 'auto', quality: 'high', outputFormat: 'png' });
   if (!detail.image.b64_json) throw new Error('8K AI 细节增强没有返回图片数据。');
   // 与普通 8K 路径共用大图串行队列，避免并发占满内存。
   const result = upscaleQueue.then(async () => {
     const merged = await blendAiDetails(graded, Buffer.from(detail.image.b64_json, 'base64'));
-    return upscaleTo8K(`data:image/png;base64,${merged.toString('base64')}`, sourceMeta.hasAlpha ? 'png' : 'jpeg');
+    const upscaled = await upscaleTo8K(`data:image/png;base64,${merged.toString('base64')}`, 'png');
+    const outputFormat = sourceMeta.hasAlpha ? 'png' : 'jpeg';
+    const output = await applyAtmosphere(Buffer.from(upscaled.image.split(',')[1], 'base64'), profile, strength, outputFormat);
+    return { output, outputFormat, metadata: upscaled.metadata };
   });
   upscaleQueue = result.then(() => {}, () => {});
-  const upscaled = await result;
-  const outputFormat = upscaled.image.match(/^data:image\/([^;]+)/)?.[1] || 'png';
-  return { image: upscaled.image, outputFormat, upscale: { ...upscaled.metadata, aiEnhanced: true }, usage: candidate.usage };
+  const { output, outputFormat, metadata } = await result;
+  return { image: `data:image/${outputFormat};base64,${output.toString('base64')}`, outputFormat,
+    upscale: { ...metadata, aiEnhanced: true }, usage, styleSignals: profile.signals };
 }
 
 function safeJob(job) {
-  return { id: job.id, status: job.status, total: job.items.length, completed: job.items.filter(x => x.status === 'completed').length, failed: job.items.filter(x => x.status === 'failed').length, items: job.items.map(({ file, ...item }) => item) };
+  return { id: job.id, status: job.status, stage: job.stage, total: job.items.length, completed: job.items.filter(x => x.status === 'completed').length, failed: job.items.filter(x => x.status === 'failed').length, items: job.items.map(({ file, ...item }) => item) };
 }
 
 async function runJob(job, options) {
@@ -252,7 +275,7 @@ async function runJob(job, options) {
   for (const item of job.items) {
     if (job.status === 'cancelled') break;
     item.status = 'processing';
-    try { item.result = await (options.reference ? referenceOne(item.file, options) : editOne(item.file, options)); item.status = 'completed'; }
+    try { item.result = await (options.reference ? referenceOne(item.file, { ...options, onStage: stage => { job.stage = stage; } }) : editOne(item.file, options)); item.status = 'completed'; }
     catch (err) { item.status = 'failed'; item.error = err?.name === 'AbortError' ? '上游处理超过 115 秒，请稍后重试。' : (err.message || '处理失败'); }
     item.file = null;
   }
@@ -323,7 +346,7 @@ app.post('/api/reference', upload.fields([{ name: 'source', maxCount: 1 }, { nam
     const source = req.files?.source?.[0];
     const reference = req.files?.reference?.[0];
     if (!source || !reference) return res.status(400).json({ error: '请分别上传一张原图和参考图。' });
-    if (!Number.isInteger(strength) || strength < 0 || strength > 100) return res.status(400).json({ error: '调色强度应为 0 到 100。' });
+    if (!Number.isInteger(strength) || strength < 0 || strength > 100) return res.status(400).json({ error: '风格强度应为 0 到 100。' });
     if (jobs.size >= 20) return res.status(429).json({ error: '当前任务较多，请稍后重试。' });
     const apiKey = configuredKey() || String(body.temporaryApiKey || '').trim();
     if (!apiKey) return res.status(503).json({ error: 'OPENAI_API_KEY 未配置。' });

@@ -13,6 +13,7 @@ let record = null;
 let activeJob = null;
 let polling = false;
 const urls = [];
+const stageLabels = { analyzing: '解析参考氛围…', matching: '迁移整体风格…', finalizing: '生成结果…' };
 
 function createUuid() {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -81,7 +82,9 @@ function render() {
     } else image.removeAttribute('src');
   }
   const status = document.querySelector('#jobStatus');
-  status.textContent = busy ? '处理中…' : record?.error ? '处理失败' : record?.resultBlob ? '已完成' : '等待上传';
+  status.textContent = busy ? (stageLabels[activeJob.stage] || '处理中…') : record?.error ? '处理失败' : record?.resultBlob ? '已完成' : '等待上传';
+  document.querySelector('#styleSignals').textContent = record?.styleSignals?.length
+    ? `识别到的影像特征：${record.styleSignals.join(' · ')}` : '处理完成后显示识别到的影像特征。';
   const download = document.querySelector('#downloadResult');
   download.setAttribute('aria-disabled', String(!record?.resultBlob));
   if (record?.resultBlob) {
@@ -102,6 +105,7 @@ async function choose(file, key) {
   record.imageId = createUuid();
   record.resultBlob = null;
   record.resultFormat = '';
+  record.styleSignals = [];
   record.error = '';
   await persist();
   render();
@@ -126,6 +130,10 @@ async function poll(jobId) {
       const item = data.job?.items?.[0];
       if (item?.imageId !== record?.imageId) throw new Error('任务与当前照片不匹配。');
       if (data.job.status === 'processing' || data.job.status === 'queued') {
+        if (data.job.stage && activeJob) {
+          activeJob.stage = data.job.stage;
+          document.querySelector('#jobStatus').textContent = stageLabels[data.job.stage] || '处理中…';
+        }
         await new Promise(resolve => setTimeout(resolve, 1800));
         continue;
       }
@@ -134,6 +142,7 @@ async function poll(jobId) {
         if (!image.ok) throw new Error('结果下载失败，请重新处理。');
         record.resultBlob = await image.blob();
         record.resultFormat = item.result.outputFormat || 'png';
+        record.styleSignals = item.result.styleSignals || [];
         record.error = '';
         message('参考调色完成，可下载或重新处理。');
       } else {
@@ -159,7 +168,7 @@ async function poll(jobId) {
 async function submit() {
   if (activeJob || !record?.source || !record?.reference) return;
   const jobId = createUuid();
-  activeJob = { id: jobId, imageId: record.imageId };
+  activeJob = { id: jobId, imageId: record.imageId, stage: 'analyzing' };
   save(JOB_KEY, activeJob);
   record.error = '';
   await persist();
