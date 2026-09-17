@@ -67,6 +67,8 @@ const message = document.querySelector('#message');
 const statusEl = document.querySelector('#status');
 const photoGrid = document.querySelector('#photoGrid');
 const submitButton = form.querySelector('.submitButton');
+const goldProgress = document.querySelector('#goldProgress');
+const callEstimate = document.querySelector('#callEstimate');
 const resetDialog = document.querySelector('#resetDialog');
 const presetLabels = Object.fromEntries([...document.querySelectorAll('[data-preset]')].map(button => [button.dataset.preset, button.textContent.trim()]));
 let records = [];
@@ -123,7 +125,7 @@ function saveSettings() {
     quality: document.querySelector('#quality').value,
     size: document.querySelector('#size').value,
     prompt: promptInput.value,
-    upscale8k: document.querySelector('#upscale8k').checked,
+    upscale4k: document.querySelector('#upscale4k').checked,
   });
 }
 
@@ -134,7 +136,7 @@ function restoreSettings() {
     if (settings[key] && [...element.options].some(option => option.value === settings[key])) element.value = settings[key];
   }
   promptInput.value = settings.prompt || presets.portraitNatural;
-  document.querySelector('#upscale8k').checked = Boolean(settings.upscale8k);
+  document.querySelector('#upscale4k').checked = Boolean(settings.upscale4k ?? settings.upscale8k);
 }
 
 function statusText(status) {
@@ -149,6 +151,12 @@ function resultName(record) {
   const base = record.name.replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_');
   const extension = record.resultFormat === 'jpg' ? 'jpeg' : (record.resultFormat || 'png');
   return `${base}-openphoto.${extension}`;
+}
+
+function updateEstimate() {
+  const count = records.length;
+  const enabled = document.querySelector('#upscale4k').checked;
+  callEstimate.textContent = enabled ? `4K 限 3 张；当前 ${count} 张，预计 ${count * 2} 次模型调用（每张调色与细节增强各一次）。` : '常规调色：每张预计 1 次模型调用。';
 }
 
 function releaseObjectUrls() {
@@ -185,7 +193,9 @@ function renderCards() {
       </div>
       <div class="cardActions">
         <a class="cardButton primary" ${outputUrl ? `href="${escapeHtml(outputUrl)}" download="${escapeHtml(resultName(record))}"` : 'aria-disabled="true"'}>单独下载</a>
+        ${record.pngUrl && Date.now() < record.pngExpiresAt ? `<a class="cardButton" href="${escapeHtml(record.pngUrl)}" download="${escapeHtml(record.name.replace(/\.[^.]+$/, ''))}-openphoto.png">无损 PNG · 24 小时</a>` : ''}
       </div>
+      ${record.resultInfo ? `<p class="resultInfo">${escapeHtml(record.resultInfo)}</p>` : ''}
       <details class="cardPrompt">
         <summary>更换提示词并重新处理</summary>
         <label>选择预设<select class="cardPreset"><option value="">自定义</option>${options}</select></label>
@@ -219,18 +229,22 @@ async function persist(record) {
 }
 
 async function storeResult(record, item, jobId) {
-  if (record.resultJobId === jobId || !item.result?.image) return;
-  record.resultJobId = jobId;
-  record.resultFormat = item.result.outputFormat || 'png';
-  record.error = '';
+  if (record.resultJobId === jobId || !item.result?.image) return true;
   try {
     const response = await fetch(item.result.image);
     if (!response.ok) throw new Error('结果下载失败');
-    record.resultBlob = await response.blob();
+    const blob = await response.blob();
+    record.resultBlob = blob;
+    record.resultFormat = item.result.outputFormat || 'png';
+    record.resultJobId = jobId;
+    record.pngUrl = item.result.pngUrl || '';
+    record.pngExpiresAt = record.pngUrl ? Date.now() + 24 * 60 * 60 * 1000 : 0;
+    const meta = item.result.upscale;
+    record.resultInfo = meta ? `${meta.width} × ${meta.height} · ${(item.result.bytes / 1024 / 1024).toFixed(2)} MB · AI 细节增强 ${meta.aiPasses} 次` : '';
     record.resultUrl = '';
-  } catch {
-    record.resultUrl = item.result.image;
-  }
+    record.error = '';
+    return true;
+  } catch { record.error = '结果下载暂时失败，正在重试；旧结果已保留。'; return false; }
 }
 
 function saveJobs() {
@@ -250,6 +264,7 @@ async function pollJob(jobId) {
   if (polling.has(jobId) || !jobs[jobId]) return;
   polling.add(jobId);
   let misses = 0;
+  let downloads = 0;
   try {
     while (jobs[jobId]) {
       let response;
@@ -272,19 +287,28 @@ async function pollJob(jobId) {
         return;
       }
       const job = data.job;
+      let transferReady = true;
       for (const item of job.items) {
         const record = records.find(entry => entry.imageId === item.imageId);
         if (!record) continue;
         record.status = item.status;
         if (item.status === 'failed') record.error = item.error || '处理失败';
-        if (item.status === 'completed') await storeResult(record, item, jobId);
+        if (item.status === 'completed' && !(await storeResult(record, item, jobId))) transferReady = false;
         await persist(record);
       }
+      const current = job.items.find(item => item.status === 'processing') || job.items.at(-1);
+      window.renderGoldProgress(goldProgress, current, false, Boolean(jobs[jobId]?.upscale4k));
       renderCards();
       setMessage(`处理中：${job.completed} / ${job.total} 已完成${job.failed ? `，${job.failed} 张失败` : ''}`);
       if (job.status === 'queued' || job.status === 'processing') {
         await new Promise(resolve => setTimeout(resolve, 1800));
         continue;
+      }
+      if (!transferReady) {
+        if (++downloads <= 3) { await new Promise(resolve => setTimeout(resolve, 1800)); continue; }
+        delete jobs[jobId]; saveJobs();
+        setMessage('结果下载连续失败，原图和旧结果已保留，请重新处理。', true);
+        return;
       }
       delete jobs[jobId];
       saveJobs();
@@ -299,12 +323,14 @@ async function pollJob(jobId) {
 
 async function submitJob(targetRecords, prompt) {
   if (!targetRecords.length) return;
+  if (document.querySelector('#upscale4k').checked && targetRecords.length > 3) return setMessage('4K 每批最多 3 张，请新建小批次后再试。', true);
   const jobId = createUuid();
-  jobs[jobId] = { imageIds: targetRecords.map(record => record.imageId) };
+  jobs[jobId] = { imageIds: targetRecords.map(record => record.imageId), upscale4k: document.querySelector('#upscale4k').checked };
   saveJobs();
   setRecordStatus(jobs[jobId].imageIds, 'queued');
   submitButton.disabled = true;
   setMessage(targetRecords.length > 1 ? `正在上传 ${targetRecords.length} 张照片…` : '正在上传并重新处理这张照片…');
+  window.renderGoldProgress(goldProgress, { stage: 'queued', status: 'queued' }, false, jobs[jobId].upscale4k);
 
   const body = new FormData();
   targetRecords.forEach(record => body.append('images', record.file, record.name));
@@ -314,7 +340,7 @@ async function submitJob(targetRecords, prompt) {
   body.append('quality', document.querySelector('#quality').value);
   body.append('size', document.querySelector('#size').value);
   body.append('prompt', prompt);
-  body.append('upscale8k', document.querySelector('#upscale8k').checked ? 'on' : '');
+  body.append('upscale4k', document.querySelector('#upscale4k').checked ? 'on' : '');
   body.append('temporaryApiKey', document.querySelector('#temporaryApiKey').value);
 
   try {
@@ -337,6 +363,8 @@ async function resetBatch() {
   saveJobs();
   imageInput.value = '';
   renderCards();
+  goldProgress.hidden = true;
+  updateEstimate();
   setMessage('已新建空白批次。');
 }
 
@@ -347,6 +375,7 @@ imageInput.addEventListener('change', async () => {
   records = files.map((file, order) => ({ imageId: createUuid(), order, name: file.name, type: file.type, lastModified: file.lastModified, file, prompt: '', resultBlob: null, resultUrl: '', status: 'ready', error: '' }));
   for (const record of records) await persist(record);
   renderCards();
+  updateEstimate();
   setMessage(`已保存 ${records.length} 张照片，刷新页面也不会丢失。`);
 });
 
@@ -364,7 +393,7 @@ document.querySelector('#newBatch').addEventListener('click', () => {
 resetDialog.addEventListener('close', () => {
   if (resetDialog.returnValue === 'confirm') resetBatch();
 });
-for (const element of form.querySelectorAll('#model,#quality,#size,#prompt,#upscale8k')) element.addEventListener('change', saveSettings);
+for (const element of form.querySelectorAll('#model,#quality,#size,#prompt,#upscale4k')) element.addEventListener('change', () => { saveSettings(); updateEstimate(); });
 document.querySelectorAll('[data-preset]').forEach(button => button.addEventListener('click', () => {
   document.querySelectorAll('[data-preset]').forEach(item => { item.classList.remove('active'); item.setAttribute('aria-pressed', 'false'); });
   button.classList.add('active');
@@ -396,6 +425,7 @@ if (matchMedia('(hover: hover) and (pointer: fine)').matches) {
 
 async function initialize() {
   restoreSettings();
+  updateEstimate();
   fetch('/api/status').then(response => response.json()).then(data => {
     statusEl.textContent = data.hasOpenAIKey ? '服务已就绪' : 'OpenAI Key 未配置';
     statusEl.className = `status ${data.hasOpenAIKey ? 'ok' : 'warn'}`;
@@ -403,6 +433,7 @@ async function initialize() {
   try {
     records = (await readImages()).sort((a, b) => a.order - b.order);
     renderCards();
+    updateEstimate();
     if (records.length) setMessage(`已恢复 ${records.length} 张照片。`);
     for (const jobId of Object.keys(jobs)) pollJob(jobId);
   } catch (error) {

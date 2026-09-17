@@ -2,10 +2,12 @@ import express from 'express';
 import multer from 'multer';
 import sharp from 'sharp';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { analyzeAtmosphere, applyAtmosphere, gradeSource, makeMontage, makeStyleChart } from './reference-grade.js';
+import { enhanceTo4K } from './four-k.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,7 +16,11 @@ const app = express();
 const port = Number(process.env.PORT || 39006);
 const jobs = new Map();
 let upscaleQueue = Promise.resolve();
+let fourKQueue = Promise.resolve();
 const jobTtlMs = 30 * 60 * 1000;
+const resultTtlMs = 24 * 60 * 60 * 1000;
+const resultMaxBytes = 8 * 1024 ** 3;
+const resultRoot = process.env.OPENPHOTO_RESULT_DIR || (process.platform === 'win32' ? path.join(os.tmpdir(), 'openphoto-results') : '/var/lib/openphoto-ai-color/results');
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const allowedModels = new Set(['gpt-image-2.5-sunburst', 'gpt-image-2.5-flare', 'gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini']);
 const allowedQuality = new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max']);
@@ -91,13 +97,13 @@ function buildPrompt(userPrompt) {
 }
 
 const detailPrompt = [
-  '这是对同一张照片的细节修复，不是重新生成或重新调色。',
-  '锁定主体身份、五官、文字、物体、轮廓、构图、色彩、光线和背景；禁止新增、删除、替换或移动任何内容。',
-  '只修复压缩损伤、轻微噪点和已有纹理的清晰度；未知细节保持原样，不凭空补造纹理。',
-  '若细节修复与原图一致性冲突，优先保留原图。',
+  '请对输入的同一张照片进行一次超高清 4K 摄影细节修复，而不是重新生成、重新调色或重绘画面。',
+  '严格锁定主体身份、五官、文字、物体边界、构图、相机角度、原有色彩、光线、影调、胶片颗粒、柔焦与抓拍动感；禁止新增、删除、替换或移动内容。',
+  '仅改善原图确实存在的边缘、纹理与压缩损伤，提升局部解析力，呈现自然的 4K HDR 明暗层次与高光细节；不要凭空补造纹理、磨皮、过度锐化、加入光源或改变原有摄影质感。',
+  '若清晰度与原片质感或真实性冲突，以原片为准；保留刻意拍摄的柔和朦胧。',
 ].join('\n');
 
-async function requestEdit(buffer, mime, name, prompt, { apiKey, model, size, quality, outputFormat }) {
+async function requestEdit(buffer, mime, name, prompt, { apiKey, model, size, quality, outputFormat, fidelity = false }) {
   const form = new FormData();
   form.append('model', model);
   form.append('prompt', prompt);
@@ -106,118 +112,106 @@ async function requestEdit(buffer, mime, name, prompt, { apiKey, model, size, qu
   form.append('size', size);
   form.append('quality', quality);
   form.append('output_format', outputFormat);
+  if (fidelity) form.append('input_fidelity', 'high');
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 115000);
+  const timer = setTimeout(() => controller.abort(), fidelity ? 180000 : 115000);
   const response = await fetch(`${configuredBaseUrl()}/images/edits`, {
     method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form, signal: controller.signal,
   }).finally(() => clearTimeout(timer));
   const text = await response.text();
   let data;
   try { data = JSON.parse(text); } catch { data = { raw: text }; }
-  if (!response.ok) throw new Error(data?.error?.message || (data?.raw && !data.raw.trimStart().startsWith('<') ? data.raw.slice(0, 300) : '') || `上游请求失败：HTTP ${response.status}`);
+  if (!response.ok) {
+    if (fidelity && response.status === 400 && /input_fidelity|unknown parameter|unsupported parameter/i.test(data?.error?.message || text)) {
+      return requestEdit(buffer, mime, name, prompt, { apiKey, model, size, quality, outputFormat });
+    }
+    if (size !== 'auto' && response.status === 400 && /size|dimension/i.test(data?.error?.message || text)) {
+      return requestEdit(buffer, mime, name, prompt, { apiKey, model, size: 'auto', quality, outputFormat, fidelity });
+    }
+    throw new Error(data?.error?.message || (data?.raw && !data.raw.trimStart().startsWith('<') ? data.raw.slice(0, 300) : '') || `上游请求失败：HTTP ${response.status}`);
+  }
   const image = data?.data?.[0];
   if (!image?.b64_json && !image?.url) throw new Error('上游没有返回图片。');
   return { image, usage: data.usage || null };
 }
 
-async function blendAiDetails(base, enhanced) {
-  const { width, height } = await sharp(base).metadata();
-  if (!width || !height) throw new Error('无法读取调色结果尺寸。');
-  const [baseSmall, enhancedSmall] = await Promise.all([base, enhanced].map(buffer =>
-    sharp(buffer).resize(64, 64, { fit: 'fill' }).greyscale().raw().toBuffer()));
-  const difference = baseSmall.reduce((sum, value, index) => sum + Math.abs(value - enhancedSmall[index]), 0) / baseSmall.length;
-  if (difference > 30) throw new Error('AI 细节增强与原图差异过大，已取消 8K 输出，请保持原图并重试。');
-
-  const [source, sourceBlur, details, detailsBlur] = await Promise.all([
-    sharp(base).ensureAlpha().raw().toBuffer(),
-    sharp(base).blur(1.4).removeAlpha().raw().toBuffer(),
-    sharp(enhanced).resize(width, height, { fit: 'fill' }).removeAlpha().raw().toBuffer(),
-    sharp(enhanced).resize(width, height, { fit: 'fill' }).blur(1.4).removeAlpha().raw().toBuffer(),
-  ]);
-  for (let pixel = 0; pixel < width * height; pixel += 1) {
-    for (let channel = 0; channel < 3; channel += 1) {
-      const index = pixel * 3 + channel;
-      const current = pixel * 4 + channel;
-      const delta = (details[index] - detailsBlur[index]) - (source[current] - sourceBlur[index]);
-      source[current] = Math.max(0, Math.min(255, Math.round(source[current] + delta * 0.6)));
+async function cleanResults() {
+  await fs.promises.mkdir(resultRoot, { recursive: true, mode: 0o700 });
+  let used = 0;
+  const now = Date.now();
+  for (const entry of await fs.promises.readdir(resultRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !uuidPattern.test(entry.name)) continue;
+    const directory = path.join(resultRoot, entry.name);
+    for (const filename of await fs.promises.readdir(directory)) {
+      const file = path.join(directory, filename);
+      const stat = await fs.promises.stat(file).catch(() => null);
+      if (!stat?.isFile()) continue;
+      if (now - stat.mtimeMs >= resultTtlMs) await fs.promises.unlink(file);
+      else used += stat.size;
     }
+    if (!(await fs.promises.readdir(directory)).length) await fs.promises.rmdir(directory);
   }
-  return sharp(source, { raw: { width, height, channels: 4 } }).png().toBuffer();
+  return used;
 }
 
-async function upscaleTo8K(dataUrl, outputFormat) {
-  const match = dataUrl.match(/^data:image\/[a-z0-9.+-]+;base64,(.+)$/i);
-  if (!match) return { image: dataUrl, metadata: null };
-
-  const input = Buffer.from(match[1], 'base64');
-  const meta = await sharp(input).metadata();
-  const width = meta.width || 0;
-  const height = meta.height || 0;
-  if (!width || !height) return { image: dataUrl, metadata: null };
-
-  const targetLongEdge = 7680;
-  const scale = targetLongEdge / Math.max(width, height);
-  if (scale <= 1) {
-    return { image: dataUrl, metadata: { originalWidth: width, originalHeight: height, width, height, upscaled: false } };
+async function saveEnhanced(jobId, imageId, png, metadata, extra = {}, preserveAlpha = false) {
+  const jpeg = await sharp(png).flatten({ background: '#fff' }).jpeg({ quality: 98, chromaSubsampling: '4:4:4' }).toBuffer();
+  const used = await cleanResults();
+  if (used + png.length + jpeg.length > resultMaxBytes) throw new Error('4K 成品存储空间已满，请稍后重试。');
+  const directory = path.join(resultRoot, jobId);
+  await fs.promises.mkdir(directory, { recursive: true, mode: 0o700 });
+  for (const [ext, buffer] of [['png', png], ['jpeg', jpeg]]) {
+    const target = path.join(directory, `${imageId}.${ext}`);
+    const temporary = `${target}.${randomUUID()}.tmp`;
+    try { await fs.promises.writeFile(temporary, buffer, { mode: 0o600 }); await fs.promises.rename(temporary, target); }
+    finally { await fs.promises.rm(temporary, { force: true }).catch(() => {}); }
   }
+  const prefix = `/api/results/${jobId}/${imageId}`;
+  const outputFormat = preserveAlpha ? 'png' : 'jpeg';
+  return { image: `${prefix}.${outputFormat}`, pngUrl: `${prefix}.png`, outputFormat,
+    bytes: outputFormat === 'png' ? png.length : jpeg.length, pngBytes: png.length, upscale: metadata, ...extra };
+}
 
-  const targetWidth = Math.round(width * scale);
-  const targetHeight = Math.round(height * scale);
-  let pipeline = sharp(input)
-    .resize(targetWidth, targetHeight, {
-      kernel: sharp.kernel.lanczos3,
-      fit: 'fill',
-      withoutEnlargement: false,
-    })
-    .sharpen({ sigma: 0.8, m1: 0.6, m2: 1.2, x1: 2, y2: 10, y3: 20 });
-
-  if (outputFormat === 'jpeg' || outputFormat === 'jpg') {
-    pipeline = pipeline.jpeg({ quality: 94, mozjpeg: true });
-  } else if (outputFormat === 'webp') {
-    pipeline = pipeline.webp({ quality: 94 });
-  } else {
-    pipeline = pipeline.png({ compressionLevel: 7 });
-  }
-
-  const output = await pipeline.toBuffer();
-  const mime = outputFormat === 'jpg' ? 'jpeg' : outputFormat;
-  return {
-    image: `data:image/${mime};base64,${output.toString('base64')}`,
-    metadata: { originalWidth: width, originalHeight: height, width: targetWidth, height: targetHeight, upscaled: true },
-  };
+async function enhanceOne(base, { apiKey, model, onStage }) {
+  const { width, height } = await sharp(base).metadata();
+  const scale = 3840 / Math.max(width, height);
+  const targetWidth = Math.max(16, Math.round(width * scale / 16) * 16);
+  const targetHeight = Math.max(16, Math.round(height * scale / 16) * 16);
+  onStage('details', 0, 1);
+  const response = await requestEdit(base, 'image/png', 'photo-detail.png', detailPrompt,
+    { apiKey, model, size: `${targetWidth}x${targetHeight}`, quality: 'high', outputFormat: 'png', fidelity: true });
+  if (!response.image.b64_json) throw new Error('4K AI 细节增强没有返回图片数据。');
+  const candidate = Buffer.from(response.image.b64_json, 'base64');
+  const result = await enhanceTo4K(base, candidate);
+  const candidateMeta = await sharp(candidate).metadata();
+  result.metadata.candidateWidth = candidateMeta.width;
+  result.metadata.candidateHeight = candidateMeta.height;
+  onStage('details', 1, 1);
+  return result;
 }
 
 async function editOne(file, options) {
-  const { apiKey, model, upscale8k, quality, size, requestOutputFormat, prompt } = options;
-  const responseOutputFormat = upscale8k ? 'jpeg' : requestOutputFormat;
-  const firstFormat = upscale8k ? 'png' : requestOutputFormat;
+  const { apiKey, model, upscale4k, quality, size, requestOutputFormat, prompt, onStage, jobId, imageId } = options;
+  const firstFormat = upscale4k ? 'png' : requestOutputFormat;
+  onStage('styling');
   const first = await requestEdit(file.buffer, file.mimetype || 'image/png', file.originalname || 'input.png', prompt,
     { apiKey, model, size, quality, outputFormat: firstFormat });
-  if (!upscale8k) {
+  if (!upscale4k) {
     return { image: first.image.b64_json ? `data:image/${firstFormat};base64,${first.image.b64_json}` : first.image.url,
       outputFormat: firstFormat, upscale: null, usage: first.usage };
   }
-  if (!first.image.b64_json) throw new Error('8K AI 增强需要上游返回图片数据，当前仅返回链接。');
-  const base = Buffer.from(first.image.b64_json, 'base64');
-  const second = await requestEdit(base, 'image/png', 'detail.png', detailPrompt,
-    { apiKey, model, size, quality: 'high', outputFormat: 'png' });
-  if (!second.image.b64_json) throw new Error('8K AI 细节增强没有返回图片数据。');
-  // 串行执行大图合成，避免并发任务同时占满服务器内存。
-  const result = upscaleQueue.then(async () => {
-    const merged = await blendAiDetails(base, Buffer.from(second.image.b64_json, 'base64'));
-    return upscaleTo8K(`data:image/png;base64,${merged.toString('base64')}`, responseOutputFormat);
-  });
-  upscaleQueue = result.then(() => {}, () => {});
-  const upscaled = await result;
-  const actualFormat = upscaled.image.match(/^data:image\/([^;]+)/)?.[1] || responseOutputFormat;
-  return { image: upscaled.image, outputFormat: actualFormat,
-    upscale: { ...upscaled.metadata, aiEnhanced: true }, usage: first.usage };
+  if (!first.image.b64_json) throw new Error('4K AI 增强需要上游返回图片数据，当前仅返回链接。');
+  const candidate = Buffer.from(first.image.b64_json, 'base64');
+  const base = await gradeSource(file.buffer, candidate, 100, 'png');
+  const result = await enhanceOne(base, { apiKey, model: 'gpt-image-2.5-sunburst', onStage });
+  onStage('exporting', 1, 1);
+  return saveEnhanced(jobId, imageId, result.output, result.metadata, { usage: first.usage }, (await sharp(file.buffer).metadata()).hasAlpha);
 }
 
-async function referenceOne(file, { apiKey, reference, strength, upscale8k, onStage }) {
+async function referenceOne(file, { apiKey, reference, strength, upscale4k, onStage, jobId, imageId }) {
   const sourceMeta = await sharp(file.buffer).metadata();
   const format = sourceMeta.format === 'jpeg' ? 'jpeg' : sourceMeta.format === 'webp' ? 'webp' : 'png';
-  if (strength === 0 && !upscale8k) return { image: `data:image/${format};base64,${file.buffer.toString('base64')}`, outputFormat: format, upscale: null, usage: null, styleSignals: ['原图保留'] };
+  if (strength === 0 && !upscale4k) return { image: `data:image/${format};base64,${file.buffer.toString('base64')}`, outputFormat: format, upscale: null, usage: null, styleSignals: ['原图保留'] };
   let graded, profile = { softness: 0, grain: 0, glow: 0, motion: 0, signals: ['原图保留'] }, usage = null;
   if (strength > 0) {
     onStage('analyzing');
@@ -241,29 +235,17 @@ async function referenceOne(file, { apiKey, reference, strength, upscale8k, onSt
     upscaleQueue = gradeTask.then(() => {}, () => {});
     graded = await gradeTask;
   } else graded = await sharp(file.buffer).rotate().png().toBuffer();
-  if (!upscale8k) {
+  if (!upscale4k) {
     const result = upscaleQueue.then(() => applyAtmosphere(graded, profile, strength, format));
     upscaleQueue = result.then(() => {}, () => {});
     const output = await result;
     return { image: `data:image/${format};base64,${output.toString('base64')}`, outputFormat: format, upscale: null, usage, styleSignals: profile.signals };
   }
 
-  onStage('finalizing');
-  const detail = await requestEdit(graded, 'image/png', 'graded.png', detailPrompt,
-    { apiKey, model: 'gpt-image-2.5-sunburst', size: 'auto', quality: 'high', outputFormat: 'png' });
-  if (!detail.image.b64_json) throw new Error('8K AI 细节增强没有返回图片数据。');
-  // 与普通 8K 路径共用大图串行队列，避免并发占满内存。
-  const result = upscaleQueue.then(async () => {
-    const merged = await blendAiDetails(graded, Buffer.from(detail.image.b64_json, 'base64'));
-    const upscaled = await upscaleTo8K(`data:image/png;base64,${merged.toString('base64')}`, 'png');
-    const outputFormat = sourceMeta.hasAlpha ? 'png' : 'jpeg';
-    const output = await applyAtmosphere(Buffer.from(upscaled.image.split(',')[1], 'base64'), profile, strength, outputFormat);
-    return { output, outputFormat, metadata: upscaled.metadata };
-  });
-  upscaleQueue = result.then(() => {}, () => {});
-  const { output, outputFormat, metadata } = await result;
-  return { image: `data:image/${outputFormat};base64,${output.toString('base64')}`, outputFormat,
-    upscale: { ...metadata, aiEnhanced: true }, usage, styleSignals: profile.signals };
+  const result = await enhanceOne(graded, { apiKey, model: 'gpt-image-2.5-sunburst', onStage });
+  onStage('exporting', 1, 1);
+  const output = await applyAtmosphere(result.output, profile, strength, 'png');
+  return saveEnhanced(jobId, imageId, output, result.metadata, { usage, styleSignals: profile.signals }, sourceMeta.hasAlpha);
 }
 
 function safeJob(job) {
@@ -271,16 +253,37 @@ function safeJob(job) {
 }
 
 async function runJob(job, options) {
-  job.status = 'processing';
-  for (const item of job.items) {
-    if (job.status === 'cancelled') break;
-    item.status = 'processing';
-    try { item.result = await (options.reference ? referenceOne(item.file, { ...options, onStage: stage => { job.stage = stage; } }) : editOne(item.file, options)); item.status = 'completed'; }
-    catch (err) { item.status = 'failed'; item.error = err?.name === 'AbortError' ? '上游处理超过 115 秒，请稍后重试。' : (err.message || '处理失败'); }
-    item.file = null;
+  let release;
+  if (options.upscale4k) {
+    const previous = fourKQueue;
+    fourKQueue = new Promise(resolve => { release = resolve; });
+    await previous;
   }
-  if (job.status !== 'cancelled') job.status = job.items.some(x => x.status === 'failed') ? 'completed_with_errors' : 'completed';
-  setTimeout(() => jobs.delete(job.id), jobTtlMs).unref();
+  job.status = 'processing';
+  try {
+    for (const item of job.items) {
+      if (job.status === 'cancelled') break;
+      item.status = 'processing';
+      const onStage = (stage, detailCompleted = 0, detailTotal = 0) => {
+        item.stage = stage; item.detailCompleted = detailCompleted; item.detailTotal = detailTotal;
+        job.stage = stage;
+      };
+      try {
+        item.result = await (options.reference
+          ? referenceOne(item.file, { ...options, jobId: job.id, imageId: item.imageId, onStage })
+          : editOne(item.file, { ...options, jobId: job.id, imageId: item.imageId, onStage }));
+        item.status = 'completed'; item.stage = 'completed';
+      } catch (err) {
+        item.status = 'failed'; item.stage = 'failed';
+        item.error = err?.name === 'AbortError' ? '上游处理超时，请稍后重试。' : (err.message || '处理失败');
+      }
+      item.file = null;
+    }
+    if (job.status !== 'cancelled') job.status = job.items.some(x => x.status === 'failed') ? 'completed_with_errors' : 'completed';
+    setTimeout(() => jobs.delete(job.id), jobTtlMs).unref();
+  } finally {
+    release?.();
+  }
 }
 
 app.post('/api/batch', upload.array('images', 10), async (req, res) => {
@@ -301,13 +304,22 @@ app.post('/api/batch', upload.array('images', 10), async (req, res) => {
     if (jobs.size >= 20) return res.status(429).json({ error: '当前任务较多，请稍后重试。' });
 
     const model = String(body.model || 'gpt-image-2.5-sunburst').trim();
-    const upscale8k = String(body.upscale8k || '') === 'on' || String(body.upscale8k || '') === 'true';
+    if (body.upscale8k === 'on' || body.upscale8k === 'true') return res.status(400).json({ error: '8K 已更换为 4K 增强，请刷新页面后重新提交。' });
+    const upscale4k = String(body.upscale4k || '') === 'on' || String(body.upscale4k || '') === 'true';
     const quality = String(body.quality || 'auto').trim();
     const size = String(body.size || 'auto').trim();
     const requestOutputFormat = String(body.outputFormat || 'png').trim();
     const userPrompt = String(body.prompt || '').trim();
     if (!allowedModels.has(model) || !allowedQuality.has(quality) || !allowedSizes.has(size) || !allowedOutputFormats.has(requestOutputFormat)) {
       return res.status(400).json({ error: '模型、质量、尺寸或输出格式参数无效。' });
+    }
+    if (upscale4k && req.files.length > 3) return res.status(400).json({ error: '4K 批次最多处理 3 张照片。' });
+    for (const file of req.files) {
+      let metadata;
+      try { metadata = await sharp(file.buffer).metadata(); } catch { return res.status(400).json({ error: '图片内容损坏或格式无效。' }); }
+      if (!['png', 'jpeg', 'webp'].includes(metadata.format) || !metadata.width || !metadata.height || metadata.width * metadata.height > 40_000_000) {
+        return res.status(400).json({ error: '只支持不超过 4000 万像素的 PNG、JPG、WEBP 图片。' });
+      }
     }
     if (userPrompt.length > 4000) return res.status(400).json({ error: '调色提示词不能超过 4000 个字符。' });
     let imageIds = [];
@@ -318,7 +330,7 @@ app.post('/api/batch', upload.array('images', 10), async (req, res) => {
     const prompt = buildPrompt(userPrompt);
     const job = { id: suppliedJobId || randomUUID(), status: 'queued', items: req.files.map((file, index) => ({ index, imageId: imageIds[index], name: file.originalname, status: 'queued', file })) };
     jobs.set(job.id, job);
-    runJob(job, { apiKey, model, upscale8k, quality, size, requestOutputFormat, prompt }).catch((err) => {
+    runJob(job, { apiKey, model, upscale4k, quality, size, requestOutputFormat, prompt }).catch((err) => {
       job.status = 'completed_with_errors';
       for (const item of job.items) {
         if (item.status === 'queued' || item.status === 'processing') {
@@ -341,6 +353,7 @@ app.post('/api/reference', upload.fields([{ name: 'source', maxCount: 1 }, { nam
     const jobId = String(body.jobId || '').trim();
     const imageId = String(body.imageId || '').trim();
     const strength = Number(body.strength ?? 70);
+    if (body.upscale8k === 'on' || body.upscale8k === 'true') return res.status(400).json({ error: '8K 已更换为 4K 增强，请刷新页面后重新提交。' });
     if (!uuidPattern.test(jobId) || !uuidPattern.test(imageId)) return res.status(400).json({ error: 'jobId 和 imageId 必须是有效 UUID。' });
     if (jobs.has(jobId)) return res.status(202).json({ job: safeJob(jobs.get(jobId)) });
     const source = req.files?.source?.[0];
@@ -360,7 +373,7 @@ app.post('/api/reference', upload.fields([{ name: 'source', maxCount: 1 }, { nam
     const job = { id: jobId, status: 'queued', items: [{ index: 0, imageId, name: source.originalname, status: 'queued', file: source }] };
     jobs.set(jobId, job);
     runJob(job, { apiKey, reference: reference.buffer, strength,
-      upscale8k: String(body.upscale8k || '') === 'on' || String(body.upscale8k || '') === 'true' }).catch(err => {
+      upscale4k: String(body.upscale4k || '') === 'on' || String(body.upscale4k || '') === 'true' }).catch(err => {
       job.status = 'completed_with_errors';
       job.items[0].status = 'failed';
       job.items[0].error = err?.message || '后台任务失败';
@@ -379,6 +392,18 @@ app.get('/api/batch/:id', (req, res) => {
   res.json({ job: safeJob(job) });
 });
 
+app.get('/api/results/:jobId/:imageId.:format', async (req, res) => {
+  const { jobId, imageId, format } = req.params;
+  if (!uuidPattern.test(jobId) || !uuidPattern.test(imageId) || !['png', 'jpeg'].includes(format)) return res.sendStatus(404);
+  const file = path.join(resultRoot, jobId, `${imageId}.${format}`);
+  const stat = await fs.promises.stat(file).catch(() => null);
+  if (!stat?.isFile() || Date.now() - stat.mtimeMs >= resultTtlMs) return res.sendStatus(404);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('Content-Type', `image/${format}`);
+  res.setHeader('Content-Length', stat.size);
+  fs.createReadStream(file).pipe(res);
+});
+
 app.use((err, _req, res, _next) => {
   res.status(400).json({ error: err?.message || '请求格式错误' });
 });
@@ -386,5 +411,7 @@ app.use((err, _req, res, _next) => {
 const server = app.listen(port, '0.0.0.0', () => {
   console.log(`Openphoto AI Color listening on 0.0.0.0:${port}`);
 });
+cleanResults().catch(error => console.error('清理 4K 成品失败：', error));
+setInterval(() => cleanResults().catch(error => console.error('清理 4K 成品失败：', error)), 60 * 60 * 1000).unref();
 server.requestTimeout = 300000;
 server.headersTimeout = 310000;

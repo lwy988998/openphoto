@@ -3,6 +3,9 @@ import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import sharp from 'sharp';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { analyzeAtmosphere, applyAtmosphere, makeStyleChart } from '../reference-grade.js';
 
 const width = 48;
@@ -45,33 +48,41 @@ const upstream = http.createServer((req, res) => {
   const chunks = [];
   req.on('data', chunk => chunks.push(chunk));
   req.on('end', () => {
-    const body = Buffer.concat(chunks).toString('utf8');
+    const input = Buffer.concat(chunks);
+    const body = input.toString('utf8');
     assert.match(body, /image\/png/);
     if (body.includes('SOURCE PHOTO')) assert.match(body, /source-and-reference\.png|style-chart-and-reference\.png/);
     if (fail === true || (fail === 'transfer' && body.includes('source-and-reference.png'))) {
       res.writeHead(502, { 'content-type': 'text/html' }); res.end('<html>bad gateway</html>'); return;
     }
     res.writeHead(200, { 'content-type': 'application/json' });
-    const image = body.includes('style-chart-and-reference.png')
+    let image = body.includes('style-chart-and-reference.png')
       ? style === 'hazy' ? hazyChart : style === 'film' ? grainyChart : chart : candidate;
+    if (body.includes('photo-detail.png')) {
+      const fileHeader = input.indexOf(Buffer.from('filename="photo-detail.png"'));
+      const beginning = input.indexOf(Buffer.from('\r\n\r\n'), fileHeader) + 4;
+      const ending = input.indexOf(Buffer.from('\r\n--'), beginning);
+      image = input.subarray(beginning, ending);
+    }
     res.end(JSON.stringify({ data: [{ b64_json: image.toString('base64') }] }));
   });
 });
 await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
 const port = 39107;
+const resultDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openphoto-4k-reference-'));
 const child = spawn(process.execPath, ['server.js'], {
-  env: { ...process.env, PORT: String(port), OPENAI_API_KEY: 'test-key', OPENAI_BASE_URL: `http://127.0.0.1:${upstream.address().port}`, OPENPHOTO_ENV_FILE: 'missing-test.env' },
+  env: { ...process.env, NODE_ENV: 'test', OPENPHOTO_RESULT_DIR: resultDir, PORT: String(port), OPENAI_API_KEY: 'test-key', OPENAI_BASE_URL: `http://127.0.0.1:${upstream.address().port}`, OPENPHOTO_ENV_FILE: 'missing-test.env' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 
-function body(jobId, imageId, strength = 70, upscale8k = false, reference = candidate) {
+function body(jobId, imageId, strength = 70, upscale4k = false, reference = candidate) {
   const form = new FormData();
   form.append('jobId', jobId);
   form.append('imageId', imageId);
   form.append('strength', String(strength));
   form.append('source', new Blob([source], { type: 'image/png' }), 'photo.png');
   form.append('reference', new Blob([reference], { type: 'image/png' }), 'film.png');
-  if (upscale8k) form.append('upscale8k', 'on');
+  if (upscale4k) form.append('upscale4k', 'on');
   return form;
 }
 
@@ -170,12 +181,16 @@ try {
   await fetch(`http://127.0.0.1:${port}/api/reference`, { method: 'POST', body: body(upId, randomUUID(), 70, true) });
   const up = await finish(upId);
   assert.equal(up.status, 'completed', up.items[0]?.error);
-  assert.equal(up.items[0].result.upscale.width, 7680);
+  assert.equal(up.items[0].result.upscale.width, 256);
   assert.equal(up.items[0].result.upscale.aiEnhanced, true);
   assert.ok(up.items[0].result.styleSignals.includes('柔焦'));
   assert.equal(calls - beforeUp, 3);
-  console.log('REFERENCE idempotent=twoCalls originalGeometry=true alpha=true threeZones=true zero=noCalls hazy=true film=true motion=true failure=true ai8k=true');
+  const output = await fetch(`http://127.0.0.1:${port}${up.items[0].result.pngUrl}`);
+  assert.equal(output.status, 200);
+  assert.equal((await sharp(Buffer.from(await output.arrayBuffer())).metadata()).width, 256);
+  console.log('REFERENCE idempotent=twoCalls originalGeometry=true alpha=true threeZones=true zero=noCalls hazy=true film=true motion=true failure=true ai4k=true');
 } finally {
   child.kill();
   upstream.close();
+  fs.rmSync(resultDir, { recursive: true, force: true });
 }

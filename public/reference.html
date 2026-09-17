@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>参考图调色工作台</title>
-  <link rel="stylesheet" href="/styles.css?v=20260917-mobile" />
+  <link rel="stylesheet" href="/styles.css?v=20260917-4k" />
   <link rel="stylesheet" href="/reference.css?v=20260917-mobile" />
 </head>
 <body class="studioPage referencePage">
@@ -24,9 +24,11 @@
           <label class="drop" for="referenceInput"><input id="referenceInput" type="file" accept="image/png,image/jpeg,image/webp" /><span class="dropIcon">✦</span><strong>上传参考图</strong><small>电影截图或喜欢的色彩风格</small><span id="referenceName" class="selectedName">尚未选择</span></label>
         </div>
         <label class="strengthControl" for="strength"><span>风格强度 <output id="strengthValue" for="strength">70%</output></span><input id="strength" name="strength" type="range" min="0" max="100" value="70" /><small>0% 保持原图，100% 更接近参考图的整体氛围</small></label>
-        <label class="featureToggle"><input id="upscale8k" type="checkbox" /><span><strong>AI 细节增强 · 8K</strong><small>额外一次 AI 调用；局部纹理可能轻微变化</small></span></label>
+        <label class="featureToggle"><input id="upscale4k" type="checkbox" /><span><strong>AI 高清细节增强 · 4K</strong><small>额外一次 AI 修复，尽量保留原片的朦胧、颗粒和电影质感</small></span></label>
         <details class="advanced"><summary>高级：临时 API Key</summary><p>只随本次请求发送，不保存到浏览器。</p><input id="temporaryApiKey" type="password" autocomplete="off" placeholder="sk-…" /></details>
         <button id="referenceSubmit" class="submitButton" type="submit"><span>开始氛围迁移</span><small>Mood match</small></button>
+        <p id="callEstimate" class="referenceHint" aria-live="polite"></p>
+        <div id="goldProgress" class="goldProgress glass" aria-live="polite" hidden></div>
         <p class="message" id="message" aria-live="polite"></p>
       </form>
       <section class="resultsSection">
@@ -37,11 +39,11 @@
           <div class="imagePane glass"><span class="imageLabel">氛围迁移结果</span><div class="referenceViewport"><img id="resultPreview" alt="氛围迁移结果" hidden /><span id="resultPlaceholder">处理完成后在这里显示</span></div></div>
         </div>
         <p class="referenceHint" id="styleSignals" aria-live="polite">处理完成后显示识别到的影像特征。</p>
-        <div class="referenceActions"><a id="downloadResult" class="cardButton primary" aria-disabled="true">单独下载结果</a><button id="reprocess" type="button" class="secondaryButton" disabled>重新处理</button></div>
+        <div class="referenceActions"><a id="downloadResult" class="cardButton primary" aria-disabled="true">单独下载结果</a><a id="downloadPng" class="cardButton" hidden>下载无损 PNG · 24 小时</a><button id="reprocess" type="button" class="secondaryButton" disabled>重新处理</button></div><p id="resultInfo" class="referenceHint"></p>
       </section>
     </div>
   </main>
   <dialog id="clearDialog" class="confirmDialog"><form method="dialog" class="glass"><span class="dialogMark">◇</span><h2>清空参考调色？</h2><p>原图、参考图、结果和任务记录将从这个浏览器中清除，不影响多图工作台。</p><div class="dialogActions"><button class="secondaryButton" value="cancel">取消</button><button class="dialogConfirm" value="confirm">确认清空</button></div></form></dialog>
-  <script src="/reference.js?v=20260917-atmosphere"></script>
+  <script src="/progress.js?v=20260917-4k"></script><script src="/reference.js?v=20260917-4k"></script>
 </body>
 </html>

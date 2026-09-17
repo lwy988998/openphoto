@@ -3,6 +3,9 @@ import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import sharp from 'sharp';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 const testPng = (await sharp({ create: { width: 16, height: 16, channels: 3, background: '#778899' } }).png().toBuffer()).toString('base64');
@@ -16,7 +19,8 @@ const upstream = http.createServer((req, res) => {
   const chunks = [];
   req.on('data', chunk => chunks.push(chunk));
   req.on('end', () => setTimeout(() => {
-    const body = Buffer.concat(chunks).toString('utf8');
+    const input = Buffer.concat(chunks);
+    const body = input.toString('utf8');
     upstreamBodies.push(body);
     if (failDetails && body.includes('细节修复')) {
       res.writeHead(502, { 'content-type': 'text/html' });
@@ -24,27 +28,35 @@ const upstream = http.createServer((req, res) => {
       return;
     }
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ data: [{ b64_json: changeDetails && body.includes('细节修复') ? changedPng : testPng }] }));
+    let output = testPng;
+    if (body.includes('photo-detail.png')) {
+      const fileHeader = input.indexOf(Buffer.from('filename="photo-detail.png"'));
+      const beginning = input.indexOf(Buffer.from('\r\n\r\n'), fileHeader) + 4;
+      const ending = input.indexOf(Buffer.from('\r\n--'), beginning);
+      output = changeDetails ? changedPng : input.subarray(beginning, ending).toString('base64');
+    }
+    res.end(JSON.stringify({ data: [{ b64_json: output }] }));
   }, 120));
 });
 await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
 const upstreamPort = upstream.address().port;
 const port = 39106;
+const resultDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openphoto-4k-smoke-'));
 const child = spawn(process.execPath, ['server.js'], {
-  env: { ...process.env, PORT: String(port), OPENAI_API_KEY: 'test-key', OPENAI_BASE_URL: `http://127.0.0.1:${upstreamPort}`, OPENPHOTO_ENV_FILE: 'missing-test.env' },
+  env: { ...process.env, NODE_ENV: 'test', OPENPHOTO_RESULT_DIR: resultDir, PORT: String(port), OPENAI_API_KEY: 'test-key', OPENAI_BASE_URL: `http://127.0.0.1:${upstreamPort}`, OPENPHOTO_ENV_FILE: 'missing-test.env' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 
-function makeBody(jobId, imageId, upscale8k = false) {
+function makeBody(jobId, imageId, upscale4k = false) {
   const body = new FormData();
   body.append('jobId', jobId);
   body.append('imageIds', JSON.stringify([imageId]));
-  body.append('images', new Blob([Buffer.from(tinyPng, 'base64')], { type: 'image/png' }), 'one.png');
+  body.append('images', new Blob([Buffer.from(testPng, 'base64')], { type: 'image/png' }), 'one.png');
   body.append('model', 'gpt-image-2.5-sunburst');
   body.append('quality', 'auto');
   body.append('size', 'auto');
   body.append('prompt', '自然调色');
-  if (upscale8k) body.append('upscale8k', 'on');
+  if (upscale4k) body.append('upscale4k', 'on');
   return body;
 }
 
@@ -71,12 +83,13 @@ try {
   assert.match(referencePage, /id="sourceInput"/);
   assert.match(referencePage, /id="referenceInput"/);
   assert.match(referencePage, /id="resultPreview"/);
-  assert.match(referencePage, /id="upscale8k"/);
+  assert.match(referencePage, /id="upscale4k"/);
   assert.match(referenceScript, /openphoto-reference/);
   assert.match(referenceScript, /openphoto\.reference\.job/);
   assert.match(studio, /class="studioLayout"/);
   assert.match(studio, /id="resetDialog"/);
-  assert.match(studio, /20260915-presets/);
+  assert.match(studio, /20260917-4k/);
+  assert.match(studio, /id="goldProgress"/);
   assert.equal((studio.match(/data-preset-category=/g) || []).length, 5);
   assert.equal((studio.match(/data-preset-panel=/g) || []).length, 5);
   assert.equal((studio.match(/data-preset="/g) || []).length, 50);
@@ -125,11 +138,31 @@ try {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   assert.equal(enhancedJob.status, 'completed', enhancedJob.items[0]?.error);
-  assert.equal(enhancedJob.items[0].result.upscale.width, 7680);
+  assert.equal(enhancedJob.items[0].result.upscale.width, 256);
   assert.equal(enhancedJob.items[0].result.upscale.aiEnhanced, true);
-  assert.match(enhancedJob.items[0].result.image, /^data:image\/jpeg;base64,/);
+  assert.match(enhancedJob.items[0].result.image, /^\/api\/results\/.*\.jpeg$/);
+  assert.equal(enhancedJob.items[0].result.upscale.aiPasses, 1);
   assert.equal(upstreamCalls, 3);
-  assert.match(upstreamBodies[2], /只修复压缩损伤/);
+  const jpegResponse = await fetch(`http://127.0.0.1:${port}${enhancedJob.items[0].result.image}`);
+  const pngResponse = await fetch(`http://127.0.0.1:${port}${enhancedJob.items[0].result.pngUrl}`);
+  assert.equal(jpegResponse.status, 200);
+  assert.equal(pngResponse.status, 200);
+  assert.equal((await sharp(Buffer.from(await jpegResponse.arrayBuffer())).metadata()).width, 256);
+  assert.equal((await sharp(Buffer.from(await pngResponse.arrayBuffer())).metadata()).width, 256);
+  const expiredPath = path.join(resultDir, enhancedId, `${enhancedJob.items[0].imageId}.png`);
+  const old = new Date(Date.now() - 25 * 60 * 60 * 1000);
+  fs.utimesSync(expiredPath, old, old);
+  assert.equal((await fetch(`http://127.0.0.1:${port}${enhancedJob.items[0].result.pngUrl}`)).status, 404);
+  const tooMany = new FormData();
+  tooMany.append('jobId', randomUUID());
+  tooMany.append('imageIds', JSON.stringify(Array.from({ length: 4 }, () => randomUUID())));
+  tooMany.append('upscale4k', 'on');
+  for (let i = 0; i < 4; i += 1) tooMany.append('images', new Blob([Buffer.from(testPng, 'base64')], { type: 'image/png' }), `${i}.png`);
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/batch`, { method: 'POST', body: tooMany })).status, 400);
+  const beforeRejected = upstreamCalls;
+  assert.match(upstreamBodies[2], /超高清 4K 摄影细节修复/);
+  assert.match(upstreamBodies[2], /input_fidelity/);
+  assert.match(upstreamBodies[2], /high/);
   changeDetails = true;
   const rejectedId = randomUUID();
   const rejected = await fetch(`http://127.0.0.1:${port}/api/batch`, {
@@ -145,7 +178,7 @@ try {
   assert.equal(rejectedJob.status, 'completed_with_errors');
   assert.match(rejectedJob.items[0].error, /差异过大/);
   assert.equal(rejectedJob.items[0].result, undefined);
-  assert.equal(upstreamCalls, 5);
+  assert.equal(upstreamCalls - beforeRejected, 2);
   changeDetails = false;
   failDetails = true;
   const failedId = randomUUID();
@@ -161,9 +194,10 @@ try {
   }
   assert.equal(failedJob.status, 'completed_with_errors');
   assert.equal(failedJob.items[0].error, '上游请求失败：HTTP 502');
-  assert.equal(upstreamCalls, 7);
-  console.log('SMOKE public=true idempotent=true mapped=true promptLocked=true ai8k=true rejectChanged=true upstream502=true upstreamCalls=7');
+  assert.equal(upstreamCalls - beforeRejected, 4);
+  console.log('SMOKE public=true idempotent=true mapped=true promptLocked=true ai4k=true rejectChanged=true upstream502=true');
 } finally {
   child.kill();
   upstream.close();
+  fs.rmSync(resultDir, { recursive: true, force: true });
 }

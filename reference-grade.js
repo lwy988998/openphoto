@@ -90,11 +90,15 @@ export async function applyAtmosphere(image, profile, strength, format) {
     const offset = pixel * 4;
     const x = pixel % info.width, y = Math.floor(pixel / info.width);
     const noise = grain ? ((Math.imul(x + 1, 374761393) ^ Math.imul(y + 1, 668265263)) >>> 16) / 65535 * 2 - 1 : 0;
+    // 人物与物体的清晰轮廓不随氛围柔焦被再次抹平。
+    const edge = blur ? Math.abs(data[offset] - blur[offset]) + Math.abs(data[offset + 1] - blur[offset + 1]) : 0;
+    const localSoft = edge > 28 ? Math.min(softMix, .08) : softMix;
+    const localMotion = edge > 28 ? Math.min(motionMix, .04) : motionMix;
     for (let c = 0; c < 3; c += 1) {
       const base = data[offset + c];
-      data[offset + c] = clamp(Math.round(base * (1 - softMix - motionMix)
-        + (blur ? blur[offset + c] * softMix : 0)
-        + (smear ? smear[offset + c] * motionMix : 0)
+      data[offset + c] = clamp(Math.round(base * (1 - localSoft - localMotion)
+        + (blur ? blur[offset + c] * localSoft : 0)
+        + (smear ? smear[offset + c] * localMotion : 0)
         + (glow ? glow[pixel] * glowMix : 0) + noise * grain), 0, 255);
     }
   }
