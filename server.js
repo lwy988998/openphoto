@@ -218,12 +218,7 @@ async function referenceOne(file, { apiKey, reference, strength, upscale8k }) {
   const sourceMeta = await sharp(file.buffer).metadata();
   const format = sourceMeta.format === 'jpeg' ? 'jpeg' : sourceMeta.format === 'webp' ? 'webp' : 'png';
   const montage = await makeMontage(file.buffer, reference);
-  const prompt = [
-    '输入图像左侧是 SOURCE PHOTO 原图，右侧是 REFERENCE 参考图。',
-    '仅分析右侧参考图的摄影调色：暗部、中间调、高光的色彩、对比度和色温。',
-    '只输出左侧原图的完整画面，构图、主体、物体、文字和边界保持原样；不输出拼图、标签或右侧参考图的内容。',
-    '只把参考图的色调与明暗气氛用于左侧原图，不改变左侧原图的拍摄内容。',
-  ].join('\n');
+  const prompt = 'Left SOURCE PHOTO is source. Right REFERENCE is color palette only. Return the left photo with reference colors. Keep contents.';
   const candidate = await requestEdit(montage, 'image/png', 'source-and-reference.png', prompt,
     { apiKey, model: 'gpt-image-2.5-sunburst', size: 'auto', quality: 'high', outputFormat: 'png' });
   if (!candidate.image.b64_json) throw new Error('参考调色需要上游返回图片数据。');
