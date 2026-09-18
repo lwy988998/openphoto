@@ -46,6 +46,8 @@ const child = spawn(process.execPath, ['server.js'], {
   env: { ...process.env, NODE_ENV: 'test', OPENPHOTO_RESULT_DIR: resultDir, PORT: String(port), OPENAI_API_KEY: 'test-key', OPENAI_BASE_URL: `http://127.0.0.1:${upstreamPort}`, OPENPHOTO_ENV_FILE: 'missing-test.env' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
+let serverErrors = '';
+child.stderr.on('data', chunk => { serverErrors += chunk; });
 
 function makeBody(jobId, imageId, upscale4k = false) {
   const body = new FormData();
@@ -90,6 +92,7 @@ try {
   assert.match(studio, /id="resetDialog"/);
   assert.match(studio, /20260917-4k/);
   assert.match(studio, /id="goldProgress"/);
+  assert.match(appScript, /class="cardError" role="alert"/);
   assert.equal((studio.match(/data-preset-category=/g) || []).length, 5);
   assert.equal((studio.match(/data-preset-panel=/g) || []).length, 5);
   assert.equal((studio.match(/data-preset="/g) || []).length, 50);
@@ -178,6 +181,8 @@ try {
   assert.equal(rejectedJob.status, 'completed_with_errors');
   assert.match(rejectedJob.items[0].error, /差异过大/);
   assert.equal(rejectedJob.items[0].result, undefined);
+  assert.match(serverErrors, new RegExp(`"jobId":"${rejectedId}"`));
+  assert.match(serverErrors, /"stage":"details"/);
   assert.equal(upstreamCalls - beforeRejected, 2);
   changeDetails = false;
   failDetails = true;
@@ -194,6 +199,7 @@ try {
   }
   assert.equal(failedJob.status, 'completed_with_errors');
   assert.equal(failedJob.items[0].error, '上游请求失败：HTTP 502');
+  assert.match(serverErrors, new RegExp(`"jobId":"${failedId}"`));
   assert.equal(upstreamCalls - beforeRejected, 4);
   console.log('SMOKE public=true idempotent=true mapped=true promptLocked=true ai4k=true rejectChanged=true upstream502=true');
 } finally {

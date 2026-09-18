@@ -196,6 +196,7 @@ function renderCards() {
         ${record.pngUrl && Date.now() < record.pngExpiresAt ? `<a class="cardButton" href="${escapeHtml(record.pngUrl)}" download="${escapeHtml(record.name.replace(/\.[^.]+$/, ''))}-openphoto.png">无损 PNG · 24 小时</a>` : ''}
       </div>
       ${record.resultInfo ? `<p class="resultInfo">${escapeHtml(record.resultInfo)}</p>` : ''}
+      ${record.error && outputUrl ? `<p class="cardError" role="alert">${escapeHtml(record.error)}；旧结果已保留。</p>` : ''}
       <details class="cardPrompt">
         <summary>更换提示词并重新处理</summary>
         <label>选择预设<select class="cardPreset"><option value="">自定义</option>${options}</select></label>

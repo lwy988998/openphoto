@@ -274,8 +274,11 @@ async function runJob(job, options) {
           : editOne(item.file, { ...options, jobId: job.id, imageId: item.imageId, onStage }));
         item.status = 'completed'; item.stage = 'completed';
       } catch (err) {
+        const failedStage = item.stage;
         item.status = 'failed'; item.stage = 'failed';
         item.error = err?.name === 'AbortError' ? '上游处理超时，请稍后重试。' : (err.message || '处理失败');
+        console.error(JSON.stringify({ event: 'job_item_failed', jobId: job.id, imageId: item.imageId,
+          stage: failedStage, error: String(item.error).replace(/sk-[\w-]+|Bearer\s+[^\s]+/gi, '[已隐藏]').slice(0, 300) }));
       }
       item.file = null;
     }

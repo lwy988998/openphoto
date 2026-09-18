@@ -13,8 +13,15 @@ export async function enhanceTo4K(source, candidate) {
   const width = Math.round(originalWidth * scale), height = Math.round(originalHeight * scale);
   const [base, candidateSmall] = await Promise.all([source, candidate].map(buffer =>
     sharp(buffer).rotate().resize(64, 64, { fit: 'fill' }).greyscale().raw().toBuffer()));
-  const difference = base.reduce((sum, value, index) => sum + Math.abs(value - candidateSmall[index]), 0) / base.length;
-  if (difference > 30) throw new Error('AI 增强结果与原图差异过大，已保留原图。');
+  const average = values => values.reduce((sum, value) => sum + value, 0) / values.length;
+  const baseMean = average(base), candidateMean = average(candidateSmall);
+  // 全局曝光变化不会改变高频细节；只比较去掉曝光后的结构差异。
+  const difference = base.reduce((sum, value, index) => sum
+    + Math.abs((value - baseMean) - (candidateSmall[index] - candidateMean)), 0) / base.length;
+  const sourceContrast = average(base.map(value => Math.abs(value - baseMean)));
+  if (difference > 30 || (sourceContrast < 4 && Math.abs(baseMean - candidateMean) > 30)) {
+    throw new Error('AI 增强结果与原图差异过大，已保留原图。');
+  }
   let matched = 0, total = 0;
   for (let y = 1; y < 63; y += 1) for (let x = 1; x < 63; x += 1) {
     const i = y * 64 + x;

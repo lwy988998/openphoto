@@ -40,6 +40,21 @@ for (let i = 0; i < noisyRaw.length; i += 3) noisyRaw.set([i % 2 ? 140 : 116, 12
 const noisy = await sharp(noisyRaw, { raw: { width: 256, height: 256, channels: 3 } }).png().toBuffer();
 const flatResult = await enhanceTo4K(flat, noisy);
 assert.ok((await sharp(flatResult.output).removeAlpha().raw().toBuffer()).every(value => value === 128), '平坦区域不能产生伪纹理');
+const exposureSource = Buffer.alloc(256 * 256 * 3), exposureCandidate = Buffer.alloc(exposureSource.length);
+for (let y = 0; y < 256; y += 1) for (let x = 0; x < 256; x += 1) {
+  const value = 50 + (x > 128 ? 50 : 0) + (x + y) % 9;
+  for (let c = 0; c < 3; c += 1) {
+    exposureSource[(y * 256 + x) * 3 + c] = value;
+    exposureCandidate[(y * 256 + x) * 3 + c] = value + 55;
+  }
+}
+const exposureInfo = { raw: { width: 256, height: 256, channels: 3 } };
+const exposureResult = await enhanceTo4K(await sharp(exposureSource, exposureInfo).png().toBuffer(),
+  await sharp(exposureCandidate, exposureInfo).png().toBuffer());
+assert.equal(exposureResult.metadata.aiEnhanced, true, '曝光变化但结构相同时仍应完成增强');
+assert.ok((await sharp(exposureResult.output).removeAlpha().raw().toBuffer()).every((value, index) => Math.abs(value - exposureSource[index]) <= 2), '曝光变化不能改写原图颜色');
+await assert.rejects(enhanceTo4K(await sharp(exposureSource, exposureInfo).png().toBuffer(),
+  await sharp(exposureSource, exposureInfo).flop().png().toBuffer()), /差异过大/, '结构错位必须拒绝');
 const wrong = await sharp({ create: { width: 256, height: 256, channels: 3, background: '#ffffff' } }).png().toBuffer();
 await assert.rejects(enhanceTo4K(flat, wrong), /差异过大/);
-console.log('QUALITY 4kSinglePass=true alphaPreserved=true detailGain=true flatProtected=true changedRejected=true');
+console.log('QUALITY 4kSinglePass=true alphaPreserved=true detailGain=true flatProtected=true exposureAccepted=true changedRejected=true');
