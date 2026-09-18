@@ -95,11 +95,11 @@ try {
   assert.match(appScript, /class="cardError" role="alert"/);
   assert.equal((studio.match(/data-preset-category=/g) || []).length, 5);
   assert.equal((studio.match(/data-preset-panel=/g) || []).length, 5);
-  assert.equal((studio.match(/data-preset="/g) || []).length, 50);
+  assert.equal((studio.match(/data-preset="/g) || []).length, 51);
   const preservation = appScript.match(/const preservationFramework = `([^`]*)`;/)?.[1] || '';
   const finish = appScript.match(/const professionalFinish = `([^`]*)`;/)?.[1] || '';
   const presetTexts = [...appScript.matchAll(/^  [A-Za-z][A-Za-z0-9]*: `([^`]*)`,/gm)].map(match => `${preservation}\n${match[1]}\n${finish}`);
-  assert.equal(presetTexts.length, 50);
+  assert.equal(presetTexts.length, 51);
   assert.ok(presetTexts.every(prompt => prompt.length >= 90));
   assert.doesNotMatch(studio, /accessPassword/);
 
@@ -130,7 +130,9 @@ try {
   assert.match(upstreamBodies[0], /<调色要求>自然调色<\/调色要求>/);
 
   assert.equal(upstreamCalls, 1);
-  assert.doesNotMatch(studio, /4K|8K|upscale/i);
+  assert.match(studio, /data-preset="repair4k">4K修复/);
+  assert.match(appScript, /超高清 4K 摄影细节修复/);
+  assert.doesNotMatch(studio, /id="upscale4k"|upscale8k|AI 高清细节增强/);
   assert.doesNotMatch(referencePage, /4K|8K|upscale/i);
   console.log('SMOKE public=true idempotent=true mapped=true promptLocked=true colorOnly=true');
 } finally {

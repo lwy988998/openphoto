@@ -13,7 +13,7 @@ const files = [
   'public/progress.js',
   'README.md',
 ];
-const forbidden = /upscale4k|upscale8k|enhanceTo4K|four-k|localLossless4K|AI 高清细节增强|4K 增强|8K|4K/i;
+const forbidden = /upscale4k|upscale8k|enhanceTo4K|four-k|localLossless4K|AI 高清细节增强|4K 增强|resultRoot|resultTtl/i;
 for (const relative of files) {
   const source = fs.readFileSync(path.join(root, relative), 'utf8');
   assert.doesNotMatch(source, forbidden, `${relative} 仍包含已删除的 4K 功能`);
