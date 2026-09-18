@@ -125,7 +125,7 @@ function saveSettings() {
     quality: document.querySelector('#quality').value,
     size: document.querySelector('#size').value,
     prompt: promptInput.value,
-    upscale4k: document.querySelector('#upscale4k').checked,
+
   });
 }
 
@@ -136,7 +136,7 @@ function restoreSettings() {
     if (settings[key] && [...element.options].some(option => option.value === settings[key])) element.value = settings[key];
   }
   promptInput.value = settings.prompt || presets.portraitNatural;
-  document.querySelector('#upscale4k').checked = Boolean(settings.upscale4k ?? settings.upscale8k);
+
 }
 
 function statusText(status) {
@@ -155,8 +155,7 @@ function resultName(record) {
 
 function updateEstimate() {
   const count = records.length;
-  const enabled = document.querySelector('#upscale4k').checked;
-  callEstimate.textContent = enabled ? `4K 限 3 张；当前 ${count} 张，预计 ${count * 2} 次模型调用（每张调色与细节增强各一次）。` : '常规调色：每张预计 1 次模型调用。';
+  callEstimate.textContent = `当前 ${count} 张，每张预计 1 次模型调用。`;
 }
 
 function releaseObjectUrls() {
@@ -193,7 +192,7 @@ function renderCards() {
       </div>
       <div class="cardActions">
         <a class="cardButton primary" ${outputUrl ? `href="${escapeHtml(outputUrl)}" download="${escapeHtml(resultName(record))}"` : 'aria-disabled="true"'}>单独下载</a>
-        ${record.pngUrl && Date.now() < record.pngExpiresAt ? `<a class="cardButton" href="${escapeHtml(record.pngUrl)}" download="${escapeHtml(record.name.replace(/\.[^.]+$/, ''))}-openphoto.png">无损 PNG · 24 小时</a>` : ''}
+
       </div>
       ${record.resultInfo ? `<p class="resultInfo">${escapeHtml(record.resultInfo)}</p>` : ''}
       ${record.error && outputUrl ? `<p class="cardError" role="alert">${escapeHtml(record.error)}；旧结果已保留。</p>` : ''}
@@ -238,11 +237,7 @@ async function storeResult(record, item, jobId) {
     record.resultBlob = blob;
     record.resultFormat = item.result.outputFormat || 'png';
     record.resultJobId = jobId;
-    record.pngUrl = item.result.pngUrl || '';
-    record.pngExpiresAt = record.pngUrl ? Date.now() + 24 * 60 * 60 * 1000 : 0;
-    const meta = item.result.upscale;
-    const enhancement = meta?.fallback === 'local-lossless' ? '本地无损 4K 回退' : `AI 细节增强 ${meta?.aiPasses || 0} 次`;
-    record.resultInfo = meta ? `${meta.width} × ${meta.height} · ${(item.result.bytes / 1024 / 1024).toFixed(2)} MB · ${enhancement}` : '';
+    record.resultInfo = '';
     record.resultUrl = '';
     record.error = '';
     return true;
@@ -299,7 +294,7 @@ async function pollJob(jobId) {
         await persist(record);
       }
       const current = job.items.find(item => item.status === 'processing') || job.items.at(-1);
-      window.renderGoldProgress(goldProgress, current, false, Boolean(jobs[jobId]?.upscale4k));
+      window.renderGoldProgress(goldProgress, current, false);
       renderCards();
       setMessage(`处理中：${job.completed} / ${job.total} 已完成${job.failed ? `，${job.failed} 张失败` : ''}`);
       if (job.status === 'queued' || job.status === 'processing') {
@@ -325,14 +320,14 @@ async function pollJob(jobId) {
 
 async function submitJob(targetRecords, prompt) {
   if (!targetRecords.length) return;
-  if (document.querySelector('#upscale4k').checked && targetRecords.length > 3) return setMessage('4K 每批最多 3 张，请新建小批次后再试。', true);
+
   const jobId = createUuid();
-  jobs[jobId] = { imageIds: targetRecords.map(record => record.imageId), upscale4k: document.querySelector('#upscale4k').checked };
+  jobs[jobId] = { imageIds: targetRecords.map(record => record.imageId) };
   saveJobs();
   setRecordStatus(jobs[jobId].imageIds, 'queued');
   submitButton.disabled = true;
   setMessage(targetRecords.length > 1 ? `正在上传 ${targetRecords.length} 张照片…` : '正在上传并重新处理这张照片…');
-  window.renderGoldProgress(goldProgress, { stage: 'queued', status: 'queued' }, false, jobs[jobId].upscale4k);
+  window.renderGoldProgress(goldProgress, { stage: 'queued', status: 'queued' }, false);
 
   const body = new FormData();
   targetRecords.forEach(record => body.append('images', record.file, record.name));
@@ -342,7 +337,7 @@ async function submitJob(targetRecords, prompt) {
   body.append('quality', document.querySelector('#quality').value);
   body.append('size', document.querySelector('#size').value);
   body.append('prompt', prompt);
-  body.append('upscale4k', document.querySelector('#upscale4k').checked ? 'on' : '');
+
   body.append('temporaryApiKey', document.querySelector('#temporaryApiKey').value);
 
   try {
@@ -395,7 +390,7 @@ document.querySelector('#newBatch').addEventListener('click', () => {
 resetDialog.addEventListener('close', () => {
   if (resetDialog.returnValue === 'confirm') resetBatch();
 });
-for (const element of form.querySelectorAll('#model,#quality,#size,#prompt,#upscale4k')) element.addEventListener('change', () => { saveSettings(); updateEstimate(); });
+for (const element of form.querySelectorAll('#model,#quality,#size,#prompt')) element.addEventListener('change', () => { saveSettings(); updateEstimate(); });
 document.querySelectorAll('[data-preset]').forEach(button => button.addEventListener('click', () => {
   document.querySelectorAll('[data-preset]').forEach(item => { item.classList.remove('active'); item.setAttribute('aria-pressed', 'false'); });
   button.classList.add('active');

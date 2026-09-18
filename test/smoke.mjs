@@ -49,7 +49,7 @@ const child = spawn(process.execPath, ['server.js'], {
 let serverErrors = '';
 child.stderr.on('data', chunk => { serverErrors += chunk; });
 
-function makeBody(jobId, imageId, upscale4k = false) {
+function makeBody(jobId, imageId) {
   const body = new FormData();
   body.append('jobId', jobId);
   body.append('imageIds', JSON.stringify([imageId]));
@@ -58,7 +58,7 @@ function makeBody(jobId, imageId, upscale4k = false) {
   body.append('quality', 'auto');
   body.append('size', 'auto');
   body.append('prompt', '自然调色');
-  if (upscale4k) body.append('upscale4k', 'on');
+
   return body;
 }
 
@@ -85,12 +85,12 @@ try {
   assert.match(referencePage, /id="sourceInput"/);
   assert.match(referencePage, /id="referenceInput"/);
   assert.match(referencePage, /id="resultPreview"/);
-  assert.match(referencePage, /id="upscale4k"/);
+
   assert.match(referenceScript, /openphoto-reference/);
   assert.match(referenceScript, /openphoto\.reference\.job/);
   assert.match(studio, /class="studioLayout"/);
   assert.match(studio, /id="resetDialog"/);
-  assert.match(studio, /20260917-4k/);
+  assert.match(studio, /20260918-color/);
   assert.match(studio, /id="goldProgress"/);
   assert.match(appScript, /class="cardError" role="alert"/);
   assert.equal((studio.match(/data-preset-category=/g) || []).length, 5);
@@ -129,79 +129,10 @@ try {
   assert.match(upstreamBodies[0], /禁止新增、删除、替换、移动、重绘或重新生成/);
   assert.match(upstreamBodies[0], /<调色要求>自然调色<\/调色要求>/);
 
-  const enhancedId = randomUUID();
-  const enhanced = await fetch(`http://127.0.0.1:${port}/api/batch`, {
-    method: 'POST', body: makeBody(enhancedId, randomUUID(), true),
-  });
-  assert.equal(enhanced.status, 202);
-  let enhancedJob;
-  for (let attempt = 0; attempt < 600; attempt += 1) {
-    enhancedJob = await fetch(`http://127.0.0.1:${port}/api/batch/${enhancedId}`).then(response => response.json()).then(data => data.job);
-    if (enhancedJob.status !== 'processing' && enhancedJob.status !== 'queued') break;
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  assert.equal(enhancedJob.status, 'completed', enhancedJob.items[0]?.error);
-  assert.equal(enhancedJob.items[0].result.upscale.width, 256);
-  assert.equal(enhancedJob.items[0].result.upscale.aiEnhanced, true);
-  assert.match(enhancedJob.items[0].result.image, /^\/api\/results\/.*\.png$/);
-  assert.equal(enhancedJob.items[0].result.outputFormat, 'png');
-  assert.equal(enhancedJob.items[0].result.upscale.aiPasses, 1);
-  assert.equal(upstreamCalls, 3);
-  const jpegResponse = await fetch(`http://127.0.0.1:${port}${enhancedJob.items[0].result.jpegUrl}`);
-  const pngResponse = await fetch(`http://127.0.0.1:${port}${enhancedJob.items[0].result.pngUrl}`);
-  assert.equal(jpegResponse.status, 200);
-  assert.equal(pngResponse.status, 200);
-  assert.equal((await sharp(Buffer.from(await jpegResponse.arrayBuffer())).metadata()).width, 256);
-  assert.equal((await sharp(Buffer.from(await pngResponse.arrayBuffer())).metadata()).width, 256);
-  const expiredPath = path.join(resultDir, enhancedId, `${enhancedJob.items[0].imageId}.png`);
-  const old = new Date(Date.now() - 25 * 60 * 60 * 1000);
-  fs.utimesSync(expiredPath, old, old);
-  assert.equal((await fetch(`http://127.0.0.1:${port}${enhancedJob.items[0].result.pngUrl}`)).status, 404);
-  const tooMany = new FormData();
-  tooMany.append('jobId', randomUUID());
-  tooMany.append('imageIds', JSON.stringify(Array.from({ length: 4 }, () => randomUUID())));
-  tooMany.append('upscale4k', 'on');
-  for (let i = 0; i < 4; i += 1) tooMany.append('images', new Blob([Buffer.from(testPng, 'base64')], { type: 'image/png' }), `${i}.png`);
-  assert.equal((await fetch(`http://127.0.0.1:${port}/api/batch`, { method: 'POST', body: tooMany })).status, 400);
-  const beforeRejected = upstreamCalls;
-  assert.match(upstreamBodies[2], /超高清 4K 摄影细节修复/);
-  assert.match(upstreamBodies[2], /input_fidelity/);
-  assert.match(upstreamBodies[2], /high/);
-  changeDetails = true;
-  const rejectedId = randomUUID();
-  const rejected = await fetch(`http://127.0.0.1:${port}/api/batch`, {
-    method: 'POST', body: makeBody(rejectedId, randomUUID(), true),
-  });
-  assert.equal(rejected.status, 202);
-  let rejectedJob;
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    rejectedJob = await fetch(`http://127.0.0.1:${port}/api/batch/${rejectedId}`).then(response => response.json()).then(data => data.job);
-    if (rejectedJob.status !== 'processing' && rejectedJob.status !== 'queued') break;
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  assert.equal(rejectedJob.status, 'completed');
-  assert.equal(rejectedJob.items[0].result.outputFormat, 'png');
-  assert.equal(rejectedJob.items[0].result.upscale.aiEnhanced, false);
-  assert.equal(rejectedJob.items[0].result.upscale.fallbackReason, 'candidate-rejected');
-  assert.equal(upstreamCalls - beforeRejected, 2);
-  changeDetails = false;
-  failDetails = true;
-  const failedId = randomUUID();
-  const failed = await fetch(`http://127.0.0.1:${port}/api/batch`, {
-    method: 'POST', body: makeBody(failedId, randomUUID(), true),
-  });
-  assert.equal(failed.status, 202);
-  let failedJob;
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    failedJob = await fetch(`http://127.0.0.1:${port}/api/batch/${failedId}`).then(response => response.json()).then(data => data.job);
-    if (failedJob.status !== 'processing' && failedJob.status !== 'queued') break;
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  assert.equal(failedJob.status, 'completed');
-  assert.equal(failedJob.items[0].result.outputFormat, 'png');
-  assert.equal(failedJob.items[0].result.upscale.fallback, 'local-lossless');
-  assert.equal(upstreamCalls - beforeRejected, 7);
-  console.log('SMOKE public=true idempotent=true mapped=true promptLocked=true ai4k=true rejectChanged=true upstreamFallback=true');
+  assert.equal(upstreamCalls, 1);
+  assert.doesNotMatch(studio, /4K|8K|upscale/i);
+  assert.doesNotMatch(referencePage, /4K|8K|upscale/i);
+  console.log('SMOKE public=true idempotent=true mapped=true promptLocked=true colorOnly=true');
 } finally {
   child.kill();
   upstream.close();

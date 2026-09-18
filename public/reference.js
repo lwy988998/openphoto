@@ -5,7 +5,7 @@ const form = document.querySelector('#referenceForm');
 const sourceInput = document.querySelector('#sourceInput');
 const referenceInput = document.querySelector('#referenceInput');
 const strengthInput = document.querySelector('#strength');
-const upscaleInput = document.querySelector('#upscale4k');
+
 const submitButton = document.querySelector('#referenceSubmit');
 const reprocessButton = document.querySelector('#reprocess');
 const goldProgress = document.querySelector('#goldProgress');
@@ -15,10 +15,10 @@ let record = null;
 let activeJob = null;
 let polling = false;
 const urls = [];
-const stageLabels = { analyzing: '解析参考氛围…', matching: '迁移整体风格…', finalizing: '生成结果…', details: 'AI 增强细节…', exporting: '正在导出…' };
+const stageLabels = { analyzing: '解析参考氛围…', matching: '迁移整体风格…', finalizing: '生成结果…' };
 
 function updateEstimate() {
-  callEstimate.textContent = upscaleInput.checked ? '预计 3 次模型调用：氛围解析、风格迁移和 4K 细节增强各一次（0% 强度仅一次）。' : '预计 2 次模型调用（风格强度 0% 时不调用）。';
+  callEstimate.textContent = '预计 2 次模型调用（风格强度 0% 时不调用）。';
 }
 
 function createUuid() {
@@ -99,12 +99,7 @@ function render() {
     const name = record.source.name.replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_');
     download.download = `${name}-reference-openphoto.${record.resultFormat || 'png'}`;
   } else { download.removeAttribute('href'); download.removeAttribute('download'); }
-  const png = document.querySelector('#downloadPng');
-  png.hidden = !record?.pngUrl || Date.now() >= record.pngExpiresAt;
-  if (!png.hidden) {
-    png.href = record.pngUrl;
-    png.download = `${record.source.name.replace(/\.[^.]+$/, '')}-reference-openphoto.png`;
-  }
+
   document.querySelector('#resultInfo').textContent = record?.resultInfo || '';
 }
 
@@ -119,7 +114,6 @@ async function choose(file, key) {
   record.imageId = createUuid();
   record.resultBlob = null;
   record.resultFormat = '';
-  record.pngUrl = '';
   record.resultInfo = '';
   record.styleSignals = [];
   record.error = '';
@@ -146,7 +140,7 @@ async function poll(jobId) {
       if (!response.ok) throw new Error(data.error || '任务未创建或已过期，请重新处理。');
       const item = data.job?.items?.[0];
       if (item?.imageId !== record?.imageId) throw new Error('任务与当前照片不匹配。');
-      window.renderGoldProgress(goldProgress, item, true, Boolean(activeJob.upscale4k));
+      window.renderGoldProgress(goldProgress, item, true);
       if (data.job.status === 'processing' || data.job.status === 'queued') {
         if (data.job.stage && activeJob) {
           activeJob.stage = data.job.stage;
@@ -169,11 +163,7 @@ async function poll(jobId) {
           throw new Error('结果下载失败，请重新处理。');
         }
         record.resultFormat = item.result.outputFormat || 'png';
-        record.pngUrl = item.result.pngUrl || '';
-        record.pngExpiresAt = record.pngUrl ? Date.now() + 24 * 60 * 60 * 1000 : 0;
-        const meta = item.result.upscale;
-        const enhancement = meta?.fallback === 'local-lossless' ? '本地无损 4K 回退' : `AI 细节增强 ${meta?.aiPasses || 0} 次`;
-        record.resultInfo = meta ? `${meta.width} × ${meta.height} · ${(item.result.bytes / 1024 / 1024).toFixed(2)} MB · ${enhancement}` : '';
+        record.resultInfo = '';
         record.styleSignals = item.result.styleSignals || [];
         record.error = '';
         message('参考调色完成，可下载或重新处理。');
@@ -200,12 +190,12 @@ async function poll(jobId) {
 async function submit() {
   if (activeJob || !record?.source || !record?.reference) return;
   const jobId = createUuid();
-  activeJob = { id: jobId, imageId: record.imageId, stage: 'queued', upscale4k: upscaleInput.checked };
+  activeJob = { id: jobId, imageId: record.imageId, stage: 'queued' };
   save(JOB_KEY, activeJob);
   record.error = '';
   await persist();
   render();
-  window.renderGoldProgress(goldProgress, { status: 'queued', stage: 'queued' }, true, upscaleInput.checked);
+  window.renderGoldProgress(goldProgress, { status: 'queued', stage: 'queued' }, true);
   message('正在上传并分析参考图…');
   const body = new FormData();
   body.append('source', record.source, record.source.name);
@@ -213,7 +203,7 @@ async function submit() {
   body.append('jobId', jobId);
   body.append('imageId', record.imageId);
   body.append('strength', strengthInput.value);
-  body.append('upscale4k', upscaleInput.checked ? 'on' : '');
+
   body.append('temporaryApiKey', document.querySelector('#temporaryApiKey').value);
   try {
     const response = await fetch('/api/reference', { method: 'POST', body });
@@ -240,8 +230,7 @@ async function submit() {
 sourceInput.addEventListener('change', async () => { await choose(sourceInput.files[0], 'source'); sourceInput.value = ''; });
 referenceInput.addEventListener('change', async () => { await choose(referenceInput.files[0], 'reference'); referenceInput.value = ''; });
 strengthInput.addEventListener('input', () => { document.querySelector('#strengthValue').textContent = `${strengthInput.value}%`; });
-strengthInput.addEventListener('change', () => save(SETTINGS_KEY, { strength: strengthInput.value, upscale4k: upscaleInput.checked }));
-upscaleInput.addEventListener('change', () => { save(SETTINGS_KEY, { strength: strengthInput.value, upscale4k: upscaleInput.checked }); updateEstimate(); });
+strengthInput.addEventListener('change', () => save(SETTINGS_KEY, { strength: strengthInput.value }));
 form.addEventListener('submit', event => { event.preventDefault(); submit(); });
 reprocessButton.addEventListener('click', submit);
 document.querySelector('#clearReference').addEventListener('click', () => {
@@ -262,7 +251,6 @@ dialog.addEventListener('close', async () => {
   const settings = load(SETTINGS_KEY, {});
   strengthInput.value = /^\d+$/.test(String(settings.strength)) ? Math.min(100, Math.max(0, Number(settings.strength))) : 70;
   document.querySelector('#strengthValue').textContent = `${strengthInput.value}%`;
-  upscaleInput.checked = Boolean(settings.upscale4k ?? settings.upscale8k);
   updateEstimate();
   try { record = await dbRequest('readonly', store => store.get('current')) || null; }
   catch { message('浏览器存储暂不可用，刷新恢复可能失效。', true); }

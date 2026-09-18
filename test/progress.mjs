@@ -13,11 +13,11 @@ vm.runInNewContext(fs.readFileSync(new URL('../public/progress.js', import.meta.
   window, document: { createElement: () => new Element() },
 });
 const progress = new Element();
-window.renderGoldProgress(progress, { stage: 'details', status: 'processing', detailCompleted: 0, detailTotal: 1 }, false, true);
-assert.equal(progress.children[1].attributes['aria-valuenow'], '2');
+window.renderGoldProgress(progress, { stage: 'styling', status: 'processing' }, false);
+assert.equal(progress.children[1].attributes['aria-valuenow'], '1');
 assert.equal(progress.children[1].children[0].style.transform, 'scaleX(0.5)');
-assert.match(progress.children[2].textContent, /0 \/ 1/);
-window.renderGoldProgress(progress, { stage: 'completed', status: 'completed' }, true, true);
+assert.match(progress.children[2].textContent, /AI 调色/);
+window.renderGoldProgress(progress, { stage: 'completed', status: 'completed' }, true);
 assert.equal(progress.children[1].children[0].style.transform, 'scaleX(1)');
-assert.equal(progress.children[0].children.length, 5);
-console.log('PROGRESS realStages=true oneAiPass=true completed=true');
+assert.equal(progress.children[0].children.length, 4);
+console.log('PROGRESS colorStages=true referenceStages=true completed=true');

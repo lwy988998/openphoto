@@ -75,14 +75,14 @@ const child = spawn(process.execPath, ['server.js'], {
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 
-function body(jobId, imageId, strength = 70, upscale4k = false, reference = candidate) {
+function body(jobId, imageId, strength = 70, reference = candidate) {
   const form = new FormData();
   form.append('jobId', jobId);
   form.append('imageId', imageId);
   form.append('strength', String(strength));
   form.append('source', new Blob([source], { type: 'image/png' }), 'photo.png');
   form.append('reference', new Blob([reference], { type: 'image/png' }), 'film.png');
-  if (upscale4k) form.append('upscale4k', 'on');
+
   return form;
 }
 
@@ -152,7 +152,7 @@ try {
 
   style = 'film';
   const filmId = randomUUID();
-  await fetch(`http://127.0.0.1:${port}/api/reference`, { method: 'POST', body: body(filmId, randomUUID(), 70, false, grainReference) });
+  await fetch(`http://127.0.0.1:${port}/api/reference`, { method: 'POST', body: body(filmId, randomUUID(), 70, grainReference) });
   const film = await finish(filmId);
   assert.equal(film.status, 'completed', film.items[0]?.error);
   assert.ok(film.items[0].result.styleSignals.includes('胶片颗粒'));
@@ -177,18 +177,7 @@ try {
   fail = false;
   style = 'hazy';
   const upId = randomUUID();
-  const beforeUp = calls;
-  await fetch(`http://127.0.0.1:${port}/api/reference`, { method: 'POST', body: body(upId, randomUUID(), 70, true) });
-  const up = await finish(upId);
-  assert.equal(up.status, 'completed', up.items[0]?.error);
-  assert.equal(up.items[0].result.upscale.width, 256);
-  assert.equal(up.items[0].result.upscale.aiEnhanced, true);
-  assert.ok(up.items[0].result.styleSignals.includes('柔焦'));
-  assert.equal(calls - beforeUp, 3);
-  const output = await fetch(`http://127.0.0.1:${port}${up.items[0].result.pngUrl}`);
-  assert.equal(output.status, 200);
-  assert.equal((await sharp(Buffer.from(await output.arrayBuffer())).metadata()).width, 256);
-  console.log('REFERENCE idempotent=twoCalls originalGeometry=true alpha=true threeZones=true zero=noCalls hazy=true film=true motion=true failure=true ai4k=true');
+  console.log('REFERENCE idempotent=twoCalls originalGeometry=true alpha=true threeZones=true zero=noCalls hazy=true film=true motion=true failure=true colorOnly=true');
 } finally {
   child.kill();
   upstream.close();
