@@ -24,7 +24,7 @@
           <label class="drop" for="referenceInput"><input id="referenceInput" type="file" accept="image/png,image/jpeg,image/webp" /><span class="dropIcon">✦</span><strong>上传参考图</strong><small>电影截图或喜欢的色彩风格</small><span id="referenceName" class="selectedName">尚未选择</span></label>
         </div>
         <label class="strengthControl" for="strength"><span>风格强度 <output id="strengthValue" for="strength">70%</output></span><input id="strength" name="strength" type="range" min="0" max="100" value="70" /><small>0% 保持原图，100% 更接近参考图的整体氛围</small></label>
-        <label class="featureToggle"><input id="upscale4k" type="checkbox" /><span><strong>AI 高清细节增强 · 4K</strong><small>额外一次 AI 修复，尽量保留原片的朦胧、颗粒和电影质感</small></span></label>
+        <label class="featureToggle"><input id="upscale4k" type="checkbox" /><span><strong>AI 高清细节增强 · 4K</strong><small>默认交付无损 PNG；保留朦胧与颗粒，上游异常自动本地回退</small></span></label>
         <details class="advanced"><summary>高级：临时 API Key</summary><p>只随本次请求发送，不保存到浏览器。</p><input id="temporaryApiKey" type="password" autocomplete="off" placeholder="sk-…" /></details>
         <button id="referenceSubmit" class="submitButton" type="submit"><span>开始氛围迁移</span><small>Mood match</small></button>
         <p id="callEstimate" class="referenceHint" aria-live="polite"></p>

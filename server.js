@@ -19,7 +19,7 @@ let upscaleQueue = Promise.resolve();
 let fourKQueue = Promise.resolve();
 const jobTtlMs = 30 * 60 * 1000;
 const resultTtlMs = 24 * 60 * 60 * 1000;
-const resultMaxBytes = 8 * 1024 ** 3;
+
 const resultRoot = process.env.OPENPHOTO_RESULT_DIR || (process.platform === 'win32' ? path.join(os.tmpdir(), 'openphoto-results') : '/var/lib/openphoto-ai-color/results');
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const allowedModels = new Set(['gpt-image-2.5-sunburst', 'gpt-image-2.5-flare', 'gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini']);
@@ -128,7 +128,9 @@ async function requestEdit(buffer, mime, name, prompt, { apiKey, model, size, qu
     if (size !== 'auto' && response.status === 400 && /size|dimension/i.test(data?.error?.message || text)) {
       return requestEdit(buffer, mime, name, prompt, { apiKey, model, size: 'auto', quality, outputFormat, fidelity });
     }
-    throw new Error(data?.error?.message || (data?.raw && !data.raw.trimStart().startsWith('<') ? data.raw.slice(0, 300) : '') || `上游请求失败：HTTP ${response.status}`);
+    const error = new Error(data?.error?.message || (data?.raw && !data.raw.trimStart().startsWith('<') ? data.raw.slice(0, 300) : '') || `上游请求失败：HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
   const image = data?.data?.[0];
   if (!image?.b64_json && !image?.url) throw new Error('上游没有返回图片。');
@@ -156,8 +158,7 @@ async function cleanResults() {
 
 async function saveEnhanced(jobId, imageId, png, metadata, extra = {}, preserveAlpha = false) {
   const jpeg = await sharp(png).flatten({ background: '#fff' }).jpeg({ quality: 98, chromaSubsampling: '4:4:4' }).toBuffer();
-  const used = await cleanResults();
-  if (used + png.length + jpeg.length > resultMaxBytes) throw new Error('4K 成品存储空间已满，请稍后重试。');
+  await cleanResults();
   const directory = path.join(resultRoot, jobId);
   await fs.promises.mkdir(directory, { recursive: true, mode: 0o700 });
   for (const [ext, buffer] of [['png', png], ['jpeg', jpeg]]) {
@@ -167,9 +168,50 @@ async function saveEnhanced(jobId, imageId, png, metadata, extra = {}, preserveA
     finally { await fs.promises.rm(temporary, { force: true }).catch(() => {}); }
   }
   const prefix = `/api/results/${jobId}/${imageId}`;
-  const outputFormat = preserveAlpha ? 'png' : 'jpeg';
-  return { image: `${prefix}.${outputFormat}`, pngUrl: `${prefix}.png`, outputFormat,
-    bytes: outputFormat === 'png' ? png.length : jpeg.length, pngBytes: png.length, upscale: metadata, ...extra };
+  return { image: `${prefix}.png`, pngUrl: `${prefix}.png`, jpegUrl: `${prefix}.jpeg`, outputFormat: 'png',
+    bytes: png.length, pngBytes: png.length, upscale: metadata, ...extra };
+}
+
+async function makeDetailProxy(base, edge) {
+  return sharp(base).rotate().resize(edge, edge, { fit: 'inside', withoutEnlargement: true })
+    .png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer();
+}
+
+async function localLossless4K(base) {
+  const metadata = await sharp(base).metadata();
+  const originalWidth = metadata.width || 0, originalHeight = metadata.height || 0;
+  const scale = Math.max(1, 3840 / Math.max(originalWidth, originalHeight));
+  const width = Math.round(originalWidth * scale), height = Math.round(originalHeight * scale);
+  const output = await sharp(base).rotate().resize(width, height, {
+    fit: 'fill', kernel: sharp.kernel.lanczos3, withoutEnlargement: false,
+  }).png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer();
+  return { output, metadata: { originalWidth, originalHeight, width, height,
+    upscaled: scale > 1, aiEnhanced: false, aiPasses: 0, fallback: 'local-lossless' } };
+}
+
+function isRetryableUpstreamError(error) {
+  return error?.status === 413 || error?.status === 429 || error?.status >= 500 || error?.name === 'AbortError';
+}
+
+async function request4KStyle(file, prompt, options) {
+  const proxyEdges = [null, 2048, 1536, 1280, 1024];
+  let lastError = null;
+  for (let attempt = 0; attempt < proxyEdges.length; attempt += 1) {
+    const edge = proxyEdges[attempt];
+    const buffer = edge ? await makeDetailProxy(file.buffer, edge) : file.buffer;
+    const mime = edge ? 'image/png' : (file.mimetype || 'image/png');
+    const name = edge ? 'photo-style-proxy.png' : (file.originalname || 'input.png');
+    try {
+      return await requestEdit(buffer, mime, name, prompt, options);
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableUpstreamError(error)) break;
+      if (attempt < proxyEdges.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, process.env.NODE_ENV === 'test' ? 10 : 800 * (attempt + 1)));
+      }
+    }
+  }
+  throw lastError || new Error('上游调色请求失败。');
 }
 
 async function enhanceOne(base, { apiKey, model, onStage }) {
@@ -178,11 +220,45 @@ async function enhanceOne(base, { apiKey, model, onStage }) {
   const targetWidth = Math.max(16, Math.round(width * scale / 16) * 16);
   const targetHeight = Math.max(16, Math.round(height * scale / 16) * 16);
   onStage('details', 0, 1);
-  const response = await requestEdit(base, 'image/png', 'photo-detail.png', detailPrompt,
-    { apiKey, model, size: `${targetWidth}x${targetHeight}`, quality: 'high', outputFormat: 'png', fidelity: true });
-  if (!response.image.b64_json) throw new Error('4K AI 细节增强没有返回图片数据。');
+  let response = null;
+  let lastError = null;
+  const proxyEdges = [2048, 1536, 1280, 1024];
+  for (let attempt = 0; attempt < proxyEdges.length; attempt += 1) {
+    const proxy = await makeDetailProxy(base, proxyEdges[attempt]);
+    try {
+      response = await requestEdit(proxy, 'image/png', 'photo-detail.png', detailPrompt,
+        { apiKey, model, size: `${targetWidth}x${targetHeight}`, quality: 'high', outputFormat: 'png', fidelity: true });
+      break;
+    } catch (error) {
+      lastError = error;
+      const retryable = error.status === 413 || error.status === 429 || error.status >= 500 || error.name === 'AbortError';
+      if (!retryable) break;
+      if (attempt < proxyEdges.length - 1) await new Promise(resolve => setTimeout(resolve, process.env.NODE_ENV === 'test' ? 10 : 800 * (attempt + 1)));
+    }
+  }
+  if (!response) {
+    const fallback = await localLossless4K(base);
+    fallback.metadata.fallbackReason = lastError?.status ? `upstream-${lastError.status}` : 'upstream-unavailable';
+    onStage('details', 1, 1);
+    return fallback;
+  }
+  if (!response.image.b64_json) {
+    const fallback = await localLossless4K(base);
+    fallback.metadata.fallbackReason = 'upstream-no-image-data';
+    onStage('details', 1, 1);
+    return fallback;
+  }
   const candidate = Buffer.from(response.image.b64_json, 'base64');
-  const result = await enhanceTo4K(base, candidate);
+  let result;
+  try {
+    result = await enhanceTo4K(base, candidate);
+  } catch (error) {
+    const fallback = await localLossless4K(base);
+    fallback.metadata.fallbackReason = 'candidate-rejected';
+    fallback.metadata.validationError = error.message;
+    onStage('details', 1, 1);
+    return fallback;
+  }
   const candidateMeta = await sharp(candidate).metadata();
   result.metadata.candidateWidth = candidateMeta.width;
   result.metadata.candidateHeight = candidateMeta.height;
@@ -194,8 +270,19 @@ async function editOne(file, options) {
   const { apiKey, model, upscale4k, quality, size, requestOutputFormat, prompt, onStage, jobId, imageId } = options;
   const firstFormat = upscale4k ? 'png' : requestOutputFormat;
   onStage('styling');
-  const first = await requestEdit(file.buffer, file.mimetype || 'image/png', file.originalname || 'input.png', prompt,
-    { apiKey, model, size, quality, outputFormat: firstFormat });
+  let first;
+  try {
+    first = await (upscale4k
+      ? request4KStyle(file, prompt, { apiKey, model, size, quality, outputFormat: firstFormat })
+      : requestEdit(file.buffer, file.mimetype || 'image/png', file.originalname || 'input.png', prompt,
+        { apiKey, model, size, quality, outputFormat: firstFormat }));
+  } catch (error) {
+    if (!upscale4k) throw error;
+    const fallback = await localLossless4K(file.buffer);
+    fallback.metadata.fallbackReason = error?.status ? `styling-upstream-${error.status}` : 'styling-upstream-unavailable';
+    onStage('details', 1, 1);
+    return saveEnhanced(jobId, imageId, fallback.output, fallback.metadata, { usage: null }, (await sharp(file.buffer).metadata()).hasAlpha);
+  }
   if (!upscale4k) {
     return { image: first.image.b64_json ? `data:image/${firstFormat};base64,${first.image.b64_json}` : first.image.url,
       outputFormat: firstFormat, upscale: null, usage: first.usage };

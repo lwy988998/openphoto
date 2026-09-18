@@ -143,10 +143,11 @@ try {
   assert.equal(enhancedJob.status, 'completed', enhancedJob.items[0]?.error);
   assert.equal(enhancedJob.items[0].result.upscale.width, 256);
   assert.equal(enhancedJob.items[0].result.upscale.aiEnhanced, true);
-  assert.match(enhancedJob.items[0].result.image, /^\/api\/results\/.*\.jpeg$/);
+  assert.match(enhancedJob.items[0].result.image, /^\/api\/results\/.*\.png$/);
+  assert.equal(enhancedJob.items[0].result.outputFormat, 'png');
   assert.equal(enhancedJob.items[0].result.upscale.aiPasses, 1);
   assert.equal(upstreamCalls, 3);
-  const jpegResponse = await fetch(`http://127.0.0.1:${port}${enhancedJob.items[0].result.image}`);
+  const jpegResponse = await fetch(`http://127.0.0.1:${port}${enhancedJob.items[0].result.jpegUrl}`);
   const pngResponse = await fetch(`http://127.0.0.1:${port}${enhancedJob.items[0].result.pngUrl}`);
   assert.equal(jpegResponse.status, 200);
   assert.equal(pngResponse.status, 200);
@@ -178,11 +179,10 @@ try {
     if (rejectedJob.status !== 'processing' && rejectedJob.status !== 'queued') break;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  assert.equal(rejectedJob.status, 'completed_with_errors');
-  assert.match(rejectedJob.items[0].error, /差异过大/);
-  assert.equal(rejectedJob.items[0].result, undefined);
-  assert.match(serverErrors, new RegExp(`"jobId":"${rejectedId}"`));
-  assert.match(serverErrors, /"stage":"details"/);
+  assert.equal(rejectedJob.status, 'completed');
+  assert.equal(rejectedJob.items[0].result.outputFormat, 'png');
+  assert.equal(rejectedJob.items[0].result.upscale.aiEnhanced, false);
+  assert.equal(rejectedJob.items[0].result.upscale.fallbackReason, 'candidate-rejected');
   assert.equal(upstreamCalls - beforeRejected, 2);
   changeDetails = false;
   failDetails = true;
@@ -197,11 +197,11 @@ try {
     if (failedJob.status !== 'processing' && failedJob.status !== 'queued') break;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  assert.equal(failedJob.status, 'completed_with_errors');
-  assert.equal(failedJob.items[0].error, '上游请求失败：HTTP 502');
-  assert.match(serverErrors, new RegExp(`"jobId":"${failedId}"`));
-  assert.equal(upstreamCalls - beforeRejected, 4);
-  console.log('SMOKE public=true idempotent=true mapped=true promptLocked=true ai4k=true rejectChanged=true upstream502=true');
+  assert.equal(failedJob.status, 'completed');
+  assert.equal(failedJob.items[0].result.outputFormat, 'png');
+  assert.equal(failedJob.items[0].result.upscale.fallback, 'local-lossless');
+  assert.equal(upstreamCalls - beforeRejected, 7);
+  console.log('SMOKE public=true idempotent=true mapped=true promptLocked=true ai4k=true rejectChanged=true upstreamFallback=true');
 } finally {
   child.kill();
   upstream.close();

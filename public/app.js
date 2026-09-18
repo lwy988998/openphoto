@@ -241,7 +241,8 @@ async function storeResult(record, item, jobId) {
     record.pngUrl = item.result.pngUrl || '';
     record.pngExpiresAt = record.pngUrl ? Date.now() + 24 * 60 * 60 * 1000 : 0;
     const meta = item.result.upscale;
-    record.resultInfo = meta ? `${meta.width} × ${meta.height} · ${(item.result.bytes / 1024 / 1024).toFixed(2)} MB · AI 细节增强 ${meta.aiPasses} 次` : '';
+    const enhancement = meta?.fallback === 'local-lossless' ? '本地无损 4K 回退' : `AI 细节增强 ${meta?.aiPasses || 0} 次`;
+    record.resultInfo = meta ? `${meta.width} × ${meta.height} · ${(item.result.bytes / 1024 / 1024).toFixed(2)} MB · ${enhancement}` : '';
     record.resultUrl = '';
     record.error = '';
     return true;
