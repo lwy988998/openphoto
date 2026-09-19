@@ -393,16 +393,59 @@ async function resetBatch() {
   setMessage('已新建空白批次。');
 }
 
+const MAX_PHOTOS = 10;
+const dropSupport = window.OpenphotoDrop;
+let ingesting = false;
+
+function byName(first, second) {
+  return first.name.localeCompare(second.name, 'zh-Hans-CN', { numeric: true, sensitivity: 'base' });
+}
+
+/* 点选和拖入共用同一条入库路径：过滤图片、按文件名排序、保留前 10 张。 */
+async function ingestFiles(incoming, { from = 'picker', summary = null } = {}) {
+  if (ingesting) return;
+  const candidates = [...incoming];
+  const images = candidates.filter(file => (dropSupport ? dropSupport.isImageFile(file) : /^image\/(png|jpe?g|webp)$/i.test(file.type))).sort(byName);
+  if (!images.length) {
+    return setMessage(from === 'drop'
+      ? `拖入的 ${summary?.scanned || 0} 个文件里没有 PNG、JPG 或 WEBP 照片，请拖照片文件或装有照片的文件夹。`
+      : '没有读取到支持的照片，请选择 PNG、JPG 或 WEBP。', true);
+  }
+  ingesting = true;
+  try {
+    const kept = images.slice(0, MAX_PHOTOS);
+    const replaced = records.length > 0;
+    await resetBatch();
+    records = kept.map((file, order) => ({ imageId: createUuid(), order, name: file.name, type: file.type, lastModified: file.lastModified, file, prompt: '', resultBlob: null, resultUrl: '', status: 'ready', error: '' }));
+    for (const record of records) await persist(record);
+    renderCards();
+    updateEstimate();
+    const notes = [`已${replaced ? '替换为' : '载入'} ${records.length} 张照片`];
+    if (images.length > kept.length) notes.push(`共读取到 ${images.length} 张，超过 ${MAX_PHOTOS} 张上限，按文件名只保留前 ${MAX_PHOTOS} 张`);
+    const skipped = summary ? summary.skipped : candidates.length - images.length;
+    if (skipped > 0) notes.push(`已忽略 ${skipped} 个非图片文件`);
+    setMessage(`${notes.join('；')}，刷新页面也不会丢失。`);
+  } finally {
+    ingesting = false;
+  }
+}
+
 imageInput.addEventListener('change', async () => {
-  const files = [...imageInput.files].filter(file => /^image\/(png|jpe?g|webp)$/i.test(file.type)).slice(0, 10);
-  if (!files.length) return setMessage('没有读取到支持的照片，请选择 PNG、JPG 或 WEBP。', true);
-  await resetBatch();
-  records = files.map((file, order) => ({ imageId: createUuid(), order, name: file.name, type: file.type, lastModified: file.lastModified, file, prompt: '', resultBlob: null, resultUrl: '', status: 'ready', error: '' }));
-  for (const record of records) await persist(record);
-  renderCards();
-  updateEstimate();
-  setMessage(`已保存 ${records.length} 张照片，刷新页面也不会丢失。`);
+  await ingestFiles(imageInput.files);
+  imageInput.value = '';
 });
+
+if (dropSupport) {
+  dropSupport.enableDropZone(document.querySelector('#dropZone'), async dataTransfer => {
+    if (Object.keys(jobs).length) {
+      return setMessage('还有任务正在处理，等它结束后再拖入新的照片。', true);
+    }
+    setMessage('正在读取拖入的照片…');
+    const summary = {};
+    const files = await dropSupport.collectFiles(dataTransfer, dropSupport.MAX_SCAN, summary);
+    await ingestFiles(files, { from: 'drop', summary });
+  });
+}
 
 form.addEventListener('submit', async event => {
   event.preventDefault();

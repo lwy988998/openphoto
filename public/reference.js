@@ -229,6 +229,21 @@ async function submit() {
 
 sourceInput.addEventListener('change', async () => { await choose(sourceInput.files[0], 'source'); sourceInput.value = ''; });
 referenceInput.addEventListener('change', async () => { await choose(referenceInput.files[0], 'reference'); referenceInput.value = ''; });
+
+/* 拖动上传：两个区域各接单张，拖入文件夹时按文件名取第一张。 */
+const dropSupport = window.OpenphotoDrop;
+if (dropSupport) {
+  for (const [selector, key] of [['label[for="sourceInput"]', 'source'], ['label[for="referenceInput"]', 'reference']]) {
+    dropSupport.enableDropZone(document.querySelector(selector), async dataTransfer => {
+      if (activeJob) return message('还有任务正在处理，完成后再替换照片。', true);
+      const files = (await dropSupport.collectFiles(dataTransfer, 24))
+        .sort((first, second) => first.name.localeCompare(second.name, 'zh-Hans-CN', { numeric: true, sensitivity: 'base' }));
+      if (!files.length) return message('没有读取到 PNG、JPG 或 WEBP 照片。', true);
+      await choose(files[0], key);
+      if (files.length > 1) message(`已选用文件夹里的第一张：${files[0].name}；这里每次只需要一张。`);
+    });
+  }
+}
 strengthInput.addEventListener('input', () => { document.querySelector('#strengthValue').textContent = `${strengthInput.value}%`; });
 strengthInput.addEventListener('change', () => save(SETTINGS_KEY, { strength: strengthInput.value }));
 form.addEventListener('submit', event => { event.preventDefault(); submit(); });

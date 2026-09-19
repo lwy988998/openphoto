@@ -173,6 +173,10 @@ textarea { resize: vertical; line-height: 1.52; }
 .dropIcon { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid rgba(242, 188, 120, .18); border-radius: 14px; color: var(--gold); background: rgba(242, 188, 120, .06); font-size: 20px; }
 .drop strong { color: var(--text); font-size: 16px; }
 .drop small { color: var(--muted); }
+.drop.dragging { border-style: solid; border-color: rgba(242, 188, 120, .8); background: linear-gradient(180deg, rgba(242, 188, 120, .17), rgba(153, 76, 185, .09)); transform: translateY(-2px); box-shadow: 0 18px 46px rgba(207, 130, 76, .16); }
+.drop.dragging .dropIcon { color: #fff4e4; border-color: rgba(242, 188, 120, .55); background: rgba(242, 188, 120, .18); }
+.drop.dragging strong { color: #fff4e4; }
+.drop.dragging small { color: #f0d9bf; }
 #selectedFiles { max-width: 100%; overflow: hidden; color: var(--success); white-space: nowrap; text-overflow: ellipsis; font-size: 11px; }
 .advanced { padding: 11px; border: 1px solid var(--line-soft); border-radius: 15px; color: var(--muted); background: rgba(255,255,255,.025); }
 .advanced summary { cursor: pointer; color: var(--text-soft); font-size: 12px; }

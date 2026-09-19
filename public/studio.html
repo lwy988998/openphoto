@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css?v=20260918-color" />
+  <link rel="stylesheet" href="/styles.css?v=20260920-drop" />
 </head>
 <body class="studioPage">
   <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
@@ -55,7 +55,7 @@
           </div>
           <label>全局提示词<textarea id="prompt" name="prompt" rows="6"></textarea></label>
         </div>
-        <label class="drop" for="imageInput"><input id="imageInput" name="images" type="file" accept="image/png,image/jpeg,image/webp" multiple /><span class="dropIcon">◇</span><strong>放入照片开始创作</strong><small>最多 10 张 · PNG / JPG / WEBP · 刷新后自动恢复</small><span id="selectedFiles">尚未选择照片</span></label>
+        <label class="drop" id="dropZone" for="imageInput"><input id="imageInput" name="images" type="file" accept="image/png,image/jpeg,image/webp" multiple /><span class="dropIcon">◇</span><strong>放入照片开始创作</strong><small>拖动照片或整个文件夹到这里 · 最多 10 张 · PNG / JPG / WEBP</small><span id="selectedFiles">尚未选择照片</span></label>
         <details class="advanced"><summary>高级：临时 API Key</summary><p>仅随本次请求发送，不会保存到浏览器。</p><input id="temporaryApiKey" name="temporaryApiKey" type="password" autocomplete="off" placeholder="sk-…" /></details>
         <button class="submitButton" type="submit"><span>开始批量处理</span><small>Generate</small></button>
         <p id="callEstimate" class="referenceHint" aria-live="polite"></p>
@@ -71,6 +71,6 @@
   <dialog id="resetDialog" class="confirmDialog">
     <form method="dialog" class="glass"><span class="dialogMark">◇</span><h2>新建空白批次？</h2><p>当前照片、处理结果和任务记录都会从这个浏览器中清除。</p><div class="dialogActions"><button class="secondaryButton" value="cancel">取消</button><button class="dialogConfirm" value="confirm">清空并新建</button></div></form>
   </dialog>
-  <script src="/progress.js?v=20260918-color"></script><script src="/app.js?v=20260919-tension"></script>
+  <script src="/progress.js?v=20260918-color"></script><script src="/drop.js?v=20260920-drop"></script><script src="/app.js?v=20260920-drop"></script>
 </body>
 </html>

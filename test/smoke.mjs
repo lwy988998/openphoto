@@ -90,8 +90,10 @@ try {
   assert.match(referenceScript, /openphoto\.reference\.job/);
   assert.match(studio, /class="studioLayout"/);
   assert.match(studio, /id="resetDialog"/);
-  assert.match(studio, /20260918-color/);
-  assert.match(studio, /app\.js\?v=20260919-tension/);
+  assert.match(studio, /styles\.css\?v=20260920-drop/);
+  assert.match(studio, /app\.js\?v=20260920-drop/);
+  assert.match(studio, /drop\.js\?v=20260920-drop/);
+  assert.match(referencePage, /drop\.js\?v=20260920-drop/);
   assert.match(studio, /id="goldProgress"/);
   assert.match(appScript, /class="cardError" role="alert"/);
   assert.equal((studio.match(/data-preset-category=/g) || []).length, 6);

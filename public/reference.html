@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>参考图调色工作台</title>
-  <link rel="stylesheet" href="/styles.css?v=20260918-color" />
+  <link rel="stylesheet" href="/styles.css?v=20260920-drop" />
   <link rel="stylesheet" href="/reference.css?v=20260917-mobile" />
 </head>
 <body class="studioPage referencePage">
@@ -20,8 +20,8 @@
         <div class="sectionHeading"><div><span class="step">01</span><h2>选择两张照片</h2></div><button class="secondaryButton" id="clearReference" type="button">清空</button></div>
         <p class="referenceHint">上传一张原图和一张参考图。AI 读取参考图的整体影像氛围：色彩、光影、柔焦、动感与颗粒。成品仍由原图像素制作。</p>
         <div class="referenceUploads">
-          <label class="drop" for="sourceInput"><input id="sourceInput" type="file" accept="image/png,image/jpeg,image/webp" /><span class="dropIcon">◇</span><strong>上传原图</strong><small>只选一张你拍摄的照片</small><span id="sourceName" class="selectedName">尚未选择</span></label>
-          <label class="drop" for="referenceInput"><input id="referenceInput" type="file" accept="image/png,image/jpeg,image/webp" /><span class="dropIcon">✦</span><strong>上传参考图</strong><small>电影截图或喜欢的色彩风格</small><span id="referenceName" class="selectedName">尚未选择</span></label>
+          <label class="drop" for="sourceInput"><input id="sourceInput" type="file" accept="image/png,image/jpeg,image/webp" /><span class="dropIcon">◇</span><strong>上传原图</strong><small>拖入或点击选择一张你拍的照片</small><span id="sourceName" class="selectedName">尚未选择</span></label>
+          <label class="drop" for="referenceInput"><input id="referenceInput" type="file" accept="image/png,image/jpeg,image/webp" /><span class="dropIcon">✦</span><strong>上传参考图</strong><small>拖入或点击选择电影截图或喜欢的色彩风格</small><span id="referenceName" class="selectedName">尚未选择</span></label>
         </div>
         <label class="strengthControl" for="strength"><span>风格强度 <output id="strengthValue" for="strength">70%</output></span><input id="strength" name="strength" type="range" min="0" max="100" value="70" /><small>0% 保持原图，100% 更接近参考图的整体氛围</small></label>
 
@@ -44,6 +44,6 @@
     </div>
   </main>
   <dialog id="clearDialog" class="confirmDialog"><form method="dialog" class="glass"><span class="dialogMark">◇</span><h2>清空参考调色？</h2><p>原图、参考图、结果和任务记录将从这个浏览器中清除，不影响多图工作台。</p><div class="dialogActions"><button class="secondaryButton" value="cancel">取消</button><button class="dialogConfirm" value="confirm">确认清空</button></div></form></dialog>
-  <script src="/progress.js?v=20260918-color"></script><script src="/reference.js?v=20260918-color"></script>
+  <script src="/progress.js?v=20260918-color"></script><script src="/drop.js?v=20260920-drop"></script><script src="/reference.js?v=20260920-drop"></script>
 </body>
 </html>
