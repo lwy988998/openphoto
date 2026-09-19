@@ -131,7 +131,9 @@ try {
 
   assert.equal(upstreamCalls, 1);
   assert.match(studio, /data-preset="repair4k">4K修复/);
-  assert.match(appScript, /超高清 4K 摄影细节修复/);
+  assert.match(appScript, /保真型照片修复和超分辨率任务/);
+  assert.match(appScript, /2× 或 4× 超分辨率/);
+  assert.match(appScript, /不把压缩噪声锐化成纹理/);
   assert.doesNotMatch(studio, /id="upscale4k"|upscale8k|AI 高清细节增强/);
   assert.doesNotMatch(referencePage, /4K|8K|upscale/i);
   console.log('SMOKE public=true idempotent=true mapped=true promptLocked=true colorOnly=true');
