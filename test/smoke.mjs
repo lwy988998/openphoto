@@ -91,16 +91,25 @@ try {
   assert.match(studio, /class="studioLayout"/);
   assert.match(studio, /id="resetDialog"/);
   assert.match(studio, /20260918-color/);
+  assert.match(studio, /app\.js\?v=20260919-tension/);
   assert.match(studio, /id="goldProgress"/);
   assert.match(appScript, /class="cardError" role="alert"/);
-  assert.equal((studio.match(/data-preset-category=/g) || []).length, 5);
-  assert.equal((studio.match(/data-preset-panel=/g) || []).length, 5);
-  assert.equal((studio.match(/data-preset="/g) || []).length, 51);
+  assert.equal((studio.match(/data-preset-category=/g) || []).length, 6);
+  assert.equal((studio.match(/data-preset-panel=/g) || []).length, 6);
+  assert.equal((studio.match(/data-preset="/g) || []).length, 61);
+  assert.match(studio, /data-preset-category="tension">情绪张力/);
+  assert.match(studio, /data-preset="apertureSnapshot">大光圈抓拍/);
   const preservation = appScript.match(/const preservationFramework = `([^`]*)`;/)?.[1] || '';
   const finish = appScript.match(/const professionalFinish = `([^`]*)`;/)?.[1] || '';
-  const presetTexts = [...appScript.matchAll(/^  [A-Za-z][A-Za-z0-9]*: `([^`]*)`,/gm)].map(match => `${preservation}\n${match[1]}\n${finish}`);
-  assert.equal(presetTexts.length, 51);
+  const presetMap = new Map([...appScript.matchAll(/^  ([A-Za-z][A-Za-z0-9]*): `([^`]*)`,/gm)].map(match => [match[1], match[2]]));
+  const presetTexts = [...presetMap.values()].map(value => `${preservation}\n${value}\n${finish}`);
+  assert.equal(presetTexts.length, 61);
   assert.ok(presetTexts.every(prompt => prompt.length >= 90));
+  const buttonKeys = [...studio.matchAll(/data-preset="([A-Za-z][A-Za-z0-9]*)"/g)].map(match => match[1]);
+  assert.deepEqual(new Set(buttonKeys), new Set(presetMap.keys()));
+  const tensionKeys = [...studio.match(/id="preset-tension"[^>]*>([\s\S]*?)<\/div>/)?.[1].matchAll(/data-preset="([^"]+)"/g) || []].map(match => match[1]);
+  assert.equal(tensionKeys.length, 10);
+  assert.ok(tensionKeys.every(key => presetMap.get(key)?.length >= 90));
   assert.doesNotMatch(studio, /accessPassword/);
 
   const access = await fetch(`http://127.0.0.1:${port}/api/access`);
@@ -125,9 +134,9 @@ try {
   assert.equal(job.items[0].imageId, imageId);
   assert.ok(job.items[0].result.image.startsWith('data:image/png;base64,'));
   assert.equal(upstreamCalls, 1);
-  assert.match(upstreamBodies[0], /原图保真后期调色/);
+  assert.match(upstreamBodies[0], /以用户上传的原图为唯一内容依据/);
   assert.match(upstreamBodies[0], /禁止新增、删除、替换、移动、重绘或重新生成/);
-  assert.match(upstreamBodies[0], /<调色要求>自然调色<\/调色要求>/);
+  assert.match(upstreamBodies[0], /<处理要求>自然调色<\/处理要求>/);
 
   assert.equal(upstreamCalls, 1);
   assert.match(studio, /data-preset="repair4k">4K修复/);
