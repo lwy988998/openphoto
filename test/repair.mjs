@@ -2,7 +2,20 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import sharp from 'sharp';
+
+const clientScript = readFileSync(new URL('../public/repair.js', import.meta.url), 'utf8');
+const uuidHelper = clientScript.match(/function createUuid\(\) \{[\s\S]*?^\}/m)?.[0];
+assert.ok(uuidHelper, '修复页需要 HTTP 可用的 UUID 生成器');
+assert.equal((clientScript.match(/crypto\.randomUUID\(\)/g) || []).length, 1);
+assert.match(clientScript, /const jobId = createUuid\(\)/);
+assert.match(clientScript, /imageId: createUuid\(\)/);
+const httpUuid = runInNewContext(`${uuidHelper}\ncreateUuid()`, {
+  crypto: { getRandomValues(bytes) { bytes.forEach((_, index) => { bytes[index] = index; }); return bytes; } },
+});
+assert.match(httpUuid, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 
 const width = 96, height = 64;
 const source = await sharp({ create: { width, height, channels: 3, background: '#7799aa' } }).png().toBuffer();
@@ -95,7 +108,7 @@ try {
   assert.equal(failedJob.items[0].status, 'failed');
   assert.equal((await fetch(`${base}/api/repair/${failed.jobId}/file`)).status, 404);
   assert.equal((await fetch(`${base}/api/repair/${ai.jobId}/file`)).status, 200);
-  console.log('REPAIR localOriginalSize=true aiNativeSize=true deduplicated=true download=true failedOldResult=true');
+  console.log('REPAIR httpUuid=true localOriginalSize=true aiNativeSize=true deduplicated=true download=true failedOldResult=true');
 } finally {
   child.kill();
   upstream.close();

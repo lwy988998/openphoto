@@ -13,6 +13,15 @@ let activeJob = null;
 let polling = false;
 let urls = [];
 
+function createUuid() {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 15) | 64;
+  bytes[8] = (bytes[8] & 63) | 128;
+  const hex = [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 const dbPromise = new Promise((resolve, reject) => {
   const request = indexedDB.open(DB_NAME, 1);
   request.onupgradeneeded = () => request.result.createObjectStore('current', { keyPath: 'id' });
@@ -132,7 +141,7 @@ async function poll(jobId) {
 
 async function submit() {
   if (activeJob || !record?.source) return;
-  const jobId = crypto.randomUUID();
+  const jobId = createUuid();
   const mode = selectedMode();
   activeJob = { id: jobId, imageId: record.imageId, mode };
   try { save(JOB_KEY, activeJob); }
@@ -176,7 +185,7 @@ sourceInput.addEventListener('change', async () => {
   if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 20 * 1048576) {
     message('只支持不超过 20 MB 的 PNG、JPG、WEBP 图片。', true); return;
   }
-  record = { id: 'current', imageId: crypto.randomUUID(), source: file, results: {}, errors: {} };
+  record = { id: 'current', imageId: createUuid(), source: file, results: {}, errors: {} };
   const saved = await persist();
   render();
   if (saved) message('原图已保存；调整强度后可开始修复。');
