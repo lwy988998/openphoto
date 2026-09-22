@@ -6,6 +6,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { analyzeAtmosphere, applyAtmosphere, gradeSource, makeMontage, makeStyleChart } from './reference-grade.js';
+import { repairPhoto } from './local-repair.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,6 +21,8 @@ const allowedModels = new Set(['gpt-image-2.5-sunburst', 'gpt-image-2.5-flare', 
 const allowedQuality = new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max']);
 const allowedSizes = new Set(['auto', '1024x1024', '1024x1536', '1536x1024']);
 const allowedOutputFormats = new Set(['png', 'jpeg', 'jpg', 'webp']);
+// 该模式生成整张候选画面，不宣称修复出了原片不存在的像素。
+const aiRepairPrompt = 'Edit the provided photograph only. Conservative photographic deblurring and restoration. Reduce slight camera shake motion blur and defocus along existing visible edges; reduce chroma noise and compression artifacts, and add restrained natural microcontrast and sharpness. Preserve the exact original framing, geometry, positions and identities of every subject and object, color palette, exposure, shadows, highlights, text, signs, and existing photographic texture. Do not reconstruct or invent illegible writing or missing details; do not repaint or replace any area, add any object, beautify, recolor, brighten the scene, or transform it into an illustration. Keep natural camera texture with no halos and no plastic smoothing. Return the full scene at highest possible resolution.';
 sharp.cache(false);
 sharp.concurrency(1);
 const upload = multer({
@@ -127,6 +130,23 @@ async function editOne(file, options) {
     outputFormat: requestOutputFormat, usage: first.usage };
 }
 
+async function repairOne(file, { mode, denoise, sharpen, apiKey, onStage }) {
+  if (mode === 'local') return repairPhoto(file.buffer, { denoise, sharpen, onStage });
+  onStage('styling');
+  const { image } = await requestEdit(file.buffer, file.mimetype, file.originalname,
+    aiRepairPrompt, { apiKey, model: 'gpt-image-2.5-sunburst', size: 'auto', quality: 'high', outputFormat: 'png' });
+  if (!image.b64_json) throw new Error('上游未返回可保存的图片数据，原图及旧结果已保留。');
+  const output = Buffer.from(image.b64_json, 'base64');
+  if (output.length > 40 * 1024 * 1024) throw new Error('AI 输出超过 40 MB。');
+  let metadata;
+  try { metadata = await sharp(output).metadata(); } catch { throw new Error('AI 返回的图片无法解码。'); }
+  if (metadata.format !== 'png' || !metadata.width || !metadata.height || metadata.width * metadata.height > 40_000_000) {
+    throw new Error('AI 返回的图片格式或尺寸无效。');
+  }
+  onStage('finalizing');
+  return { output, width: metadata.width, height: metadata.height };
+}
+
 async function referenceOne(file, { apiKey, reference, strength, onStage }) {
   const sourceMeta = await sharp(file.buffer).metadata();
   const format = sourceMeta.format === 'jpeg' ? 'jpeg' : sourceMeta.format === 'webp' ? 'webp' : 'png';
@@ -175,9 +195,15 @@ async function runJob(job, options) {
         job.stage = stage;
       };
       try {
-        item.result = await (options.reference
-          ? referenceOne(item.file, { ...options, jobId: job.id, imageId: item.imageId, onStage })
-          : editOne(item.file, { ...options, jobId: job.id, imageId: item.imageId, onStage }));
+        if (options.repair) {
+          const result = await repairOne(item.file, { ...options.repair, onStage });
+          job.repairOutput = result.output;
+          item.result = { width: result.width, height: result.height, mode: item.mode };
+        } else {
+          item.result = await (options.reference
+            ? referenceOne(item.file, { ...options, jobId: job.id, imageId: item.imageId, onStage })
+            : editOne(item.file, { ...options, jobId: job.id, imageId: item.imageId, onStage }));
+        }
         item.status = 'completed'; item.stage = 'completed';
       } catch (err) {
         const failedStage = item.stage;
@@ -298,6 +324,51 @@ app.post('/api/reference', upload.fields([{ name: 'source', maxCount: 1 }, { nam
   } catch (err) {
     res.status(500).json({ error: err?.message || '服务器处理失败' });
   }
+});
+
+app.post('/api/repair', upload.single('source'), async (req, res) => {
+  try {
+    const { jobId, imageId } = req.body || {};
+    const mode = String(req.body?.mode || 'local');
+    if (!uuidPattern.test(String(jobId)) || !uuidPattern.test(String(imageId))) return res.status(400).json({ error: '任务编号无效。' });
+    if (jobs.has(jobId)) return res.status(202).json({ job: safeJob(jobs.get(jobId)) });
+    if (!['local', 'ai'].includes(mode)) return res.status(400).json({ error: '修复模式无效。' });
+    const denoise = Number(req.body?.denoise);
+    const sharpen = Number(req.body?.sharpen);
+    if (mode === 'local' && (![denoise, sharpen].every(value => Number.isInteger(value) && value >= 0 && value <= 100))) {
+      return res.status(400).json({ error: '降噪和锐化强度须为 0 到 100。' });
+    }
+    const source = req.file;
+    if (!source) return res.status(400).json({ error: '请上传一张照片。' });
+    let metadata;
+    try { metadata = await sharp(source.buffer).metadata(); } catch { return res.status(400).json({ error: '图片无法解码。' }); }
+    if (!['png', 'jpeg', 'webp'].includes(metadata.format) || !metadata.width || !metadata.height || metadata.width * metadata.height > 40_000_000) {
+      return res.status(400).json({ error: '只支持不超过 4000 万像素的 PNG、JPG、WEBP 图片。' });
+    }
+    if (jobs.size >= 20) return res.status(429).json({ error: '当前任务较多，请稍后重试。' });
+    const apiKey = mode === 'ai' ? configuredKey() : '';
+    if (mode === 'ai' && !apiKey) return res.status(503).json({ error: '服务器没有配置图像 API Key。' });
+    const job = { id: jobId, status: 'queued', items: [{ index: 0, imageId, name: source.originalname, mode: mode === 'ai' ? 'ai-repair' : 'local-repair', status: 'queued', stage: 'queued', file: source }] };
+    jobs.set(jobId, job);
+    runJob(job, { repair: { mode, denoise, sharpen, apiKey } }).catch(error => {
+      job.status = 'completed_with_errors';
+      job.items[0].status = 'failed'; job.items[0].error = error?.message || '修复失败'; job.items[0].file = null;
+      setTimeout(() => jobs.delete(job.id), jobTtlMs).unref();
+    });
+    res.status(202).json({ job: safeJob(job) });
+  } catch (error) { res.status(500).json({ error: error?.message || '修复失败' }); }
+});
+
+app.get('/api/repair/:id/file', async (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job?.repairOutput) return res.status(404).json({ error: '结果尚未完成或已过期。' });
+  const format = String(req.query.format || 'png');
+  if (!['png', 'jpeg'].includes(format)) return res.status(400).json({ error: '只支持 PNG 或 JPG 下载。' });
+  try {
+    const output = format === 'png' ? job.repairOutput
+      : await sharp(job.repairOutput).flatten({ background: '#ffffff' }).jpeg({ quality: 98, chromaSubsampling: '4:4:4' }).toBuffer();
+    res.type(format === 'png' ? 'png' : 'jpeg').send(output);
+  } catch { res.status(500).json({ error: '导出失败，请重试。' }); }
 });
 
 app.get('/api/batch/:id', (req, res) => {
