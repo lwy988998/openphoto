@@ -6,7 +6,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { analyzeAtmosphere, applyAtmosphere, gradeSource, makeMontage, makeStyleChart } from './reference-grade.js';
-import { repairPhoto } from './local-repair.js';
+import { lockRepairColor, repairPhoto } from './local-repair.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,7 +22,18 @@ const allowedQuality = new Set(['auto', 'low', 'medium', 'high', 'xhigh', 'max']
 const allowedSizes = new Set(['auto', '1024x1024', '1024x1536', '1536x1024']);
 const allowedOutputFormats = new Set(['png', 'jpeg', 'jpg', 'webp']);
 // 该模式生成整张候选画面，不宣称修复出了原片不存在的像素。
-const aiRepairPrompt = 'Edit the provided photograph only. Conservative photographic deblurring and restoration. Reduce slight camera shake motion blur and defocus along existing visible edges; reduce chroma noise and compression artifacts, and add restrained natural microcontrast and sharpness. Preserve the exact original framing, geometry, positions and identities of every subject and object, color palette, exposure, shadows, highlights, text, signs, and existing photographic texture. Do not reconstruct or invent illegible writing or missing details; do not repaint or replace any area, add any object, beautify, recolor, brighten the scene, or transform it into an illustration. Keep natural camera texture with no halos and no plastic smoothing. Return the full scene at highest possible resolution.';
+const aiRepairPrompt = `这是一次基于原图的 AI 高清重建与清晰度修复任务，不是重新创作或风格转换。
+
+请以用户上传的原图为唯一内容和结构依据，修复因轻微失焦、相机抖动、运动模糊、噪点及压缩造成的清晰度损失。允许严格依据原图中已经存在的轮廓、边缘、明暗关系、材质趋势和上下文，对模糊细节进行自然、合理且克制的重建，以提高主体边缘、建筑结构、衣物、头发、植物及其他可辨认物体的解析力。
+
+严格保持原始构图、裁切比例、相机视角、透视、景深、人物身份、五官比例、表情、姿态、物体数量、物体位置、背景结构、色彩关系、白平衡、曝光、阴影、高光和整体明暗不变。不得新增、删除、移动、替换或重新设计人物和物体，不得美颜、改变肤色、重新布光或进行风格化处理。
+
+只允许根据原图已有视觉证据恢复细节。对于文字、标志、车牌、屏幕内容及其他无法可靠辨认的信息，保持原有形状和模糊程度，不得猜测、补写或生成新的字符。对于证据不足的纹理，使用自然、低强度、与周围一致的细节，不得编造具体结构。
+
+适度降低亮度噪点、彩色噪点和压缩伪影，并恢复自然微对比度。边缘应清晰但不过度锐化，不产生白边、黑边、振铃、摩尔纹、重复纹理、塑料皮肤、蜡像感或明显的 AI 生成痕迹。
+
+最终输出应当仍然是同一张照片，只表现为失焦和抖动得到改善、噪点降低、已有细节更清晰的专业修复版本。若清晰度增强与原图真实性发生冲突，优先保持原图真实性、身份、结构、色彩和明暗。`;
+const retryableUpstreamStatuses = new Set([429, 502, 503, 504]);
 sharp.cache(false);
 sharp.concurrency(1);
 const upload = multer({
@@ -91,34 +102,50 @@ function buildPrompt(userPrompt) {
   ].join('\n');
 }
 
-async function requestEdit(buffer, mime, name, prompt, { apiKey, model, size, quality, outputFormat }) {
-  const form = new FormData();
-  form.append('model', model);
-  form.append('prompt', prompt);
-  form.append('image', new Blob([buffer], { type: mime }), name);
-  form.append('n', '1');
-  form.append('size', size);
-  form.append('quality', quality);
-  form.append('output_format', outputFormat);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 115000);
-  const response = await fetch(`${configuredBaseUrl()}/images/edits`, {
-    method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form, signal: controller.signal,
-  }).finally(() => clearTimeout(timer));
-  const text = await response.text();
-  let data;
-  try { data = JSON.parse(text); } catch { data = { raw: text }; }
-  if (!response.ok) {
-    if (size !== 'auto' && response.status === 400 && /size|dimension/i.test(data?.error?.message || text)) {
-      return requestEdit(buffer, mime, name, prompt, { apiKey, model, size: 'auto', quality, outputFormat });
+async function requestEdit(buffer, mime, name, prompt, { apiKey, model, size, quality, outputFormat, onAttempt = () => {} }) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    onAttempt(attempt, 2);
+    const form = new FormData();
+    form.append('model', model);
+    form.append('prompt', prompt);
+    form.append('image', new Blob([buffer], { type: mime }), name);
+    form.append('n', '1');
+    form.append('size', size);
+    form.append('quality', quality);
+    form.append('output_format', outputFormat);
+    const controller = new AbortController();
+    const startedAt = Date.now();
+    const timer = setTimeout(() => controller.abort(), 300000);
+    try {
+      const response = await fetch(`${configuredBaseUrl()}/images/edits`, {
+        method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form, signal: controller.signal,
+      });
+      const text = await response.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = { raw: text }; }
+      if (!response.ok) {
+        if (size !== 'auto' && response.status === 400 && /size|dimension/i.test(data?.error?.message || text)) {
+          return requestEdit(buffer, mime, name, prompt, { apiKey, model, size: 'auto', quality, outputFormat, onAttempt });
+        }
+        const error = new Error(data?.error?.message || (data?.raw && !data.raw.trimStart().startsWith('<') ? data.raw.slice(0, 300) : '') || `上游请求失败：HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+      const image = data?.data?.[0];
+      if (!image?.b64_json && !image?.url) throw new Error('上游没有返回图片。');
+      console.log(JSON.stringify({ event: 'upstream_completed', attempt, elapsedMs: Date.now() - startedAt }));
+      return { image, usage: data.usage || null, attempt };
+    } catch (error) {
+      const retryable = error?.name === 'AbortError' || (!error?.status && error instanceof TypeError)
+        || retryableUpstreamStatuses.has(error?.status);
+      if (!retryable || attempt === 2) throw error;
+      console.warn(JSON.stringify({ event: 'upstream_retry', attempt, status: error?.status || 'network_or_timeout',
+        elapsedMs: Date.now() - startedAt }));
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    } finally {
+      clearTimeout(timer);
     }
-    const error = new Error(data?.error?.message || (data?.raw && !data.raw.trimStart().startsWith('<') ? data.raw.slice(0, 300) : '') || `上游请求失败：HTTP ${response.status}`);
-    error.status = response.status;
-    throw error;
   }
-  const image = data?.data?.[0];
-  if (!image?.b64_json && !image?.url) throw new Error('上游没有返回图片。');
-  return { image, usage: data.usage || null };
 }
 
 async function editOne(file, options) {
@@ -133,18 +160,20 @@ async function editOne(file, options) {
 async function repairOne(file, { mode, denoise, sharpen, apiKey, onStage }) {
   if (mode === 'local') return repairPhoto(file.buffer, { denoise, sharpen, onStage });
   onStage('styling');
-  const { image } = await requestEdit(file.buffer, file.mimetype, file.originalname,
-    aiRepairPrompt, { apiKey, model: 'gpt-image-2.5-sunburst', size: 'auto', quality: 'high', outputFormat: 'png' });
+  const { image, attempt } = await requestEdit(file.buffer, file.mimetype, file.originalname,
+    aiRepairPrompt, { apiKey, model: 'gpt-image-2.5-sunburst', size: 'auto', quality: 'high', outputFormat: 'png',
+      onAttempt: (attempt, total) => onStage('styling', attempt, total) });
   if (!image.b64_json) throw new Error('上游未返回可保存的图片数据，原图及旧结果已保留。');
-  const output = Buffer.from(image.b64_json, 'base64');
-  if (output.length > 40 * 1024 * 1024) throw new Error('AI 输出超过 40 MB。');
+  const candidate = Buffer.from(image.b64_json, 'base64');
+  if (candidate.length > 40 * 1024 * 1024) throw new Error('AI 输出超过 40 MB。');
   let metadata;
-  try { metadata = await sharp(output).metadata(); } catch { throw new Error('AI 返回的图片无法解码。'); }
+  try { metadata = await sharp(candidate).metadata(); } catch { throw new Error('AI 返回的图片无法解码。'); }
   if (metadata.format !== 'png' || !metadata.width || !metadata.height || metadata.width * metadata.height > 40_000_000) {
     throw new Error('AI 返回的图片格式或尺寸无效。');
   }
   onStage('finalizing');
-  return { output, width: metadata.width, height: metadata.height };
+  const result = await lockRepairColor(file.buffer, candidate);
+  return { ...result, attempt, colorLocked: true };
 }
 
 async function referenceOne(file, { apiKey, reference, strength, onStage }) {
@@ -198,7 +227,8 @@ async function runJob(job, options) {
         if (options.repair) {
           const result = await repairOne(item.file, { ...options.repair, onStage });
           job.repairOutput = result.output;
-          item.result = { width: result.width, height: result.height, mode: item.mode };
+          item.result = { width: result.width, height: result.height, mode: item.mode, attempt: result.attempt || 1,
+            colorLocked: Boolean(result.colorLocked) };
         } else {
           item.result = await (options.reference
             ? referenceOne(item.file, { ...options, jobId: job.id, imageId: item.imageId, onStage })

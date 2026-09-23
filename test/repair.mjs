@@ -7,11 +7,18 @@ import { runInNewContext } from 'node:vm';
 import sharp from 'sharp';
 
 const clientScript = readFileSync(new URL('../public/repair.js', import.meta.url), 'utf8');
+const serverScript = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
 const uuidHelper = clientScript.match(/function createUuid\(\) \{[\s\S]*?^\}/m)?.[0];
 assert.ok(uuidHelper, '修复页需要 HTTP 可用的 UUID 生成器');
 assert.equal((clientScript.match(/crypto\.randomUUID\(\)/g) || []).length, 1);
 assert.match(clientScript, /const jobId = createUuid\(\)/);
 assert.match(clientScript, /imageId: createUuid\(\)/);
+assert.match(clientScript, /上次结果 · 本次处理中/);
+assert.match(clientScript, /任务 \$\{jobId\}/);
+assert.match(serverScript, /setTimeout\(\(\) => controller\.abort\(\), 300000\)/);
+assert.doesNotMatch(serverScript, /115000/);
+assert.match(serverScript, /允许严格依据原图中已经存在的轮廓/);
+assert.match(serverScript, /不得猜测、补写或生成新的字符/);
 const httpUuid = runInNewContext(`${uuidHelper}\ncreateUuid()`, {
   crypto: { getRandomValues(bytes) { bytes.forEach((_, index) => { bytes[index] = index; }); return bytes; } },
 });
@@ -21,7 +28,7 @@ const width = 96, height = 64;
 const source = await sharp({ create: { width, height, channels: 3, background: '#7799aa' } }).png().toBuffer();
 const rebuilt = await sharp({ create: { width: 41, height: 23, channels: 3, background: '#556677' } }).png().toBuffer();
 let upstreamCalls = 0;
-let failUpstream = false;
+let failureStatuses = [];
 let upstreamPrompt = '';
 const upstream = http.createServer((req, res) => {
   upstreamCalls++;
@@ -29,8 +36,9 @@ const upstream = http.createServer((req, res) => {
   req.on('data', chunk => chunks.push(chunk));
   req.on('end', () => {
     upstreamPrompt = Buffer.concat(chunks).toString('utf8');
-    res.writeHead(failUpstream ? 502 : 200, { 'Content-Type': 'application/json' });
-    res.end(failUpstream ? JSON.stringify({ error: { message: '测试上游故障' } })
+    const failureStatus = failureStatuses.shift();
+    res.writeHead(failureStatus || 200, { 'Content-Type': 'application/json' });
+    res.end(failureStatus ? JSON.stringify({ error: { message: `测试上游故障 ${failureStatus}` } })
       : JSON.stringify({ data: [{ b64_json: rebuilt.toString('base64') }] }));
   });
 });
@@ -94,21 +102,37 @@ try {
   assert.equal(aiJob.items[0].mode, 'ai-repair');
   assert.equal(aiJob.items[0].result.width, 41);
   assert.equal(aiJob.items[0].result.height, 23);
+  assert.equal(aiJob.items[0].result.colorLocked, true);
   const aiFile = Buffer.from(await fetch(`${base}/api/repair/${ai.jobId}/file?format=png`).then(response => response.arrayBuffer()));
-  assert.deepEqual(aiFile, rebuilt);
+  assert.deepEqual([...await sharp(aiFile).removeAlpha().raw().toBuffer().then(data => data.subarray(0, 3))], [119, 153, 170]);
   assert.equal(upstreamCalls, 1);
-  assert.match(upstreamPrompt, /Conservative photographic deblurring/);
+  assert.match(upstreamPrompt, /AI 高清重建与清晰度修复任务/);
   const jpeg = await fetch(`${base}/api/repair/${ai.jobId}/file?format=jpeg`);
   assert.equal(jpeg.status, 200);
   assert.equal((await sharp(Buffer.from(await jpeg.arrayBuffer())).metadata()).format, 'jpeg');
 
-  failUpstream = true;
+  const retryStart = upstreamCalls;
+  failureStatuses = [502];
+  const retried = await submit('ai');
+  const retriedJob = await completed(retried.jobId);
+  assert.equal(retriedJob.items[0].status, 'completed');
+  assert.equal(retriedJob.items[0].result.attempt, 2);
+  assert.equal(upstreamCalls - retryStart, 2);
+
+  const authStart = upstreamCalls;
+  failureStatuses = [401];
+  const authFailed = await submit('ai');
+  const authJob = await completed(authFailed.jobId);
+  assert.equal(authJob.items[0].status, 'failed');
+  assert.equal(upstreamCalls - authStart, 1);
+
+  failureStatuses = [502, 502];
   const failed = await submit('ai');
   const failedJob = await completed(failed.jobId);
   assert.equal(failedJob.items[0].status, 'failed');
   assert.equal((await fetch(`${base}/api/repair/${failed.jobId}/file`)).status, 404);
   assert.equal((await fetch(`${base}/api/repair/${ai.jobId}/file`)).status, 200);
-  console.log('REPAIR httpUuid=true localOriginalSize=true aiNativeSize=true deduplicated=true download=true failedOldResult=true');
+  console.log('REPAIR httpUuid=true prompt=true timeout=300s retry=true authNoRetry=true oldResultLabel=true colorLocked=true localOriginalSize=true aiNativeSize=true deduplicated=true download=true failedOldResult=true');
 } finally {
   child.kill();
   upstream.close();

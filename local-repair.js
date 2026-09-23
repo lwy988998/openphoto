@@ -1,5 +1,48 @@
 import sharp from 'sharp';
 
+const clamp = value => Math.max(0, Math.min(255, Math.round(value)));
+
+// 保留 AI 生成的高频细节，同时把全局色彩、明暗和透明度匹配回原片。
+export async function lockRepairColor(source, candidate) {
+  const metadata = await sharp(candidate).metadata();
+  if (!metadata.width || !metadata.height) throw new Error('AI 返回的图片尺寸无效。');
+  const read = image => sharp(image).rotate().resize(metadata.width, metadata.height, { fit: 'fill' })
+    .toColourspace('srgb').ensureAlpha().raw().toBuffer();
+  const [original, rebuilt] = await Promise.all([read(source), read(candidate)]);
+  const count = metadata.width * metadata.height;
+  const originalMean = [0, 0, 0], rebuiltMean = [0, 0, 0];
+  const originalSquare = [0, 0, 0], rebuiltSquare = [0, 0, 0];
+  let visible = 0;
+  for (let pixel = 0; pixel < count; pixel++) {
+    const offset = pixel * 4;
+    if (!original[offset + 3]) continue;
+    visible++;
+    for (let channel = 0; channel < 3; channel++) {
+      const a = original[offset + channel], b = rebuilt[offset + channel];
+      originalMean[channel] += a; rebuiltMean[channel] += b;
+      originalSquare[channel] += a * a; rebuiltSquare[channel] += b * b;
+    }
+  }
+  if (!visible) throw new Error('原图没有可见像素。');
+  const gain = originalMean.map((sum, channel) => {
+    originalMean[channel] = sum / visible;
+    rebuiltMean[channel] /= visible;
+    const originalDeviation = Math.sqrt(Math.max(0, originalSquare[channel] / visible - originalMean[channel] ** 2));
+    const rebuiltDeviation = Math.sqrt(Math.max(0, rebuiltSquare[channel] / visible - rebuiltMean[channel] ** 2));
+    return Math.max(.5, Math.min(2, originalDeviation / Math.max(1, rebuiltDeviation)));
+  });
+  for (let pixel = 0; pixel < count; pixel++) {
+    const offset = pixel * 4;
+    for (let channel = 0; channel < 3; channel++) {
+      rebuilt[offset + channel] = clamp((rebuilt[offset + channel] - rebuiltMean[channel]) * gain[channel] + originalMean[channel]);
+    }
+    rebuilt[offset + 3] = original[offset + 3];
+  }
+  const output = await sharp(rebuilt, { raw: { width: metadata.width, height: metadata.height, channels: 4 } })
+    .sharpen({ sigma: .9, m1: 1, m2: .5, x1: 2, y2: 10, y3: 20 }).png().toBuffer();
+  return { output, width: metadata.width, height: metadata.height };
+}
+
 // 保持原图色差：仅对 R/G/B 加同一个受限亮度增量，绝不重绘或放大。
 export async function repairPhoto(source, { denoise = 30, sharpen = 25, onStage = () => {} } = {}) {
   if (![denoise, sharpen].every(value => Number.isInteger(value) && value >= 0 && value <= 100)) {

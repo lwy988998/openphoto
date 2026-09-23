@@ -32,7 +32,9 @@ window.renderGoldProgress = (element, item, reference = false) => {
   track.append(fill);
   const detail = document.createElement('p');
   detail.className = 'goldDetail';
+  const attempt = item.mode === 'ai-repair' && item.stage === 'styling' && item.detailTotal
+    ? ` · 第 ${item.detailCompleted}/${item.detailTotal} 次处理` : '';
   detail.textContent = item.status === 'failed' ? `处理失败：${item.error || '请重试'}` :
-    item.status === 'completed' ? '处理完成 · 可独立下载' : `当前：${steps[current]?.[1] || '准备中'}`;
+    item.status === 'completed' ? '处理完成 · 可独立下载' : `当前：${steps[current]?.[1] || '准备中'}${attempt}`;
   element.replaceChildren(rail, track, detail);
 };

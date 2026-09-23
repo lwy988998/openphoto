@@ -63,10 +63,12 @@ function render() {
   document.getElementById('localControls').hidden = mode !== 'local';
   document.getElementById('modeHint').textContent = mode === 'local'
     ? '基于 Sharp / libvips 处理原片已有像素；严重失焦的信息不能凭空找回。'
-    : 'AI 会重新生成整张画面，可能改变文字、物体和局部色彩；按模型实际尺寸下载，不保证 4K。预计调用一次图像模型。';
+    : 'AI 会根据原图证据重建模糊细节，可能改变文字或局部纹理；按模型实际尺寸下载，不保证 4K。失败时最多重试一次。';
   document.querySelector('#repairSubmit span').textContent = mode === 'ai' ? '开始 AI 清晰重建' : '开始保真修复';
   document.querySelector('#repairSubmit small').textContent = mode === 'ai' ? '实际输出尺寸' : '原片尺寸';
-  document.getElementById('resultLabel').textContent = mode === 'ai' ? 'AI 重建结果 · 实际输出尺寸' : '保真结果 · 原片尺寸';
+  const resultPrefix = busy && result ? '上次结果 · 本次处理中' : error && result ? '上次结果 · 本次失败后保留' : '本次结果';
+  document.getElementById('resultLabel').textContent = mode === 'ai'
+    ? `${resultPrefix} · AI 重建实际尺寸` : `${resultPrefix} · 保真原片尺寸`;
   document.querySelector('#repairSubmit').disabled = busy || !record?.source;
   document.querySelector('#reprocess').disabled = busy || !record?.source;
   document.querySelector('#sourceName').textContent = record?.source?.name || '尚未选择';
@@ -86,7 +88,8 @@ function render() {
       anchor.download = `${record.source.name.replace(/\.[^.]+$/, '').replace(/[^\w.-]/g, '_')}-${mode === 'ai' ? 'ai-reconstruction' : 'faithful-repair'}-openphoto.${extension}`;
     } else { anchor.removeAttribute('href'); anchor.removeAttribute('download'); }
   }
-  document.getElementById('jobStatus').textContent = busy ? '处理中' : error ? '处理失败（旧结果已保留）' : result?.png ? '已完成' : '等待上传';
+  document.getElementById('jobStatus').textContent = busy ? (result ? '处理中（显示上次结果）' : '处理中')
+    : error ? '处理失败（旧结果已保留）' : result?.png ? '已完成' : '等待上传';
   document.getElementById('resultInfo').textContent = result?.info || '';
   if (!busy && !result?.png && !error) progress.hidden = true;
 }
@@ -106,7 +109,9 @@ async function poll(jobId) {
       const item = data.job?.items?.[0];
       if (item?.imageId !== record?.imageId || item.mode !== (activeJob.mode === 'ai' ? 'ai-repair' : 'local-repair')) throw new Error('任务与当前照片不匹配。');
       window.renderGoldProgress(progress, item);
-      document.getElementById('jobStatus').textContent = { denoising: '正在降噪', sharpening: '正在修复清晰度', styling: '正在 AI 重建', finalizing: '正在导出' }[item.stage] || '处理中';
+      const attempt = item.mode === 'ai-repair' && item.stage === 'styling' && item.detailTotal
+        ? `（第 ${item.detailCompleted}/${item.detailTotal} 次）` : '';
+      document.getElementById('jobStatus').textContent = ({ denoising: '正在降噪', sharpening: '正在修复清晰度', styling: '正在 AI 重建', finalizing: '正在导出' }[item.stage] || '处理中') + attempt;
       if (['queued', 'processing'].includes(data.job.status)) { await new Promise(resolve => setTimeout(resolve, 1600)); continue; }
       if (item.status !== 'completed') throw new Error(item.error || '修复失败。');
       const outputs = await Promise.all(['png', 'jpeg'].map(async format => {
@@ -115,7 +120,9 @@ async function poll(jobId) {
         return result.blob();
       }));
       record.results ||= {};
-      record.results[activeJob.mode] = { png: outputs[0], jpeg: outputs[1], info: `${item.result.width} × ${item.result.height} 像素 · PNG ${(outputs[0].size / 1048576).toFixed(1)} MB · JPG ${(outputs[1].size / 1048576).toFixed(1)} MB · ${activeJob.mode === 'ai' ? 'AI 重建，可能改变细节，按原生尺寸导出' : '保真修复，原片尺寸'}` };
+      const elapsedSeconds = Math.max(0, Math.round((Date.now() - (activeJob.startedAt || Date.now())) / 1000));
+      record.results[activeJob.mode] = { png: outputs[0], jpeg: outputs[1],
+        info: `任务 ${jobId} · ${new Date().toLocaleString('zh-CN')} · 用时 ${elapsedSeconds} 秒 · ${item.result.width} × ${item.result.height} 像素 · PNG ${(outputs[0].size / 1048576).toFixed(1)} MB · JPG ${(outputs[1].size / 1048576).toFixed(1)} MB · ${activeJob.mode === 'ai' ? 'AI 高清重建，已匹配原片色彩与明暗，可能推断细节，按原生尺寸导出' : '保真降噪锐化，原片尺寸'}` };
       record.errors ||= {};
       record.errors[activeJob.mode] = '';
       await persist();
@@ -143,7 +150,7 @@ async function submit() {
   if (activeJob || !record?.source) return;
   const jobId = createUuid();
   const mode = selectedMode();
-  activeJob = { id: jobId, imageId: record.imageId, mode };
+  activeJob = { id: jobId, imageId: record.imageId, mode, startedAt: Date.now() };
   try { save(JOB_KEY, activeJob); }
   catch { activeJob = null; message('任务无法保存到浏览器，请检查存储空间。', true); return; }
   record.errors ||= {};
