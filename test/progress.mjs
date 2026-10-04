@@ -20,4 +20,13 @@ assert.match(progress.children[2].textContent, /AI 调色/);
 window.renderGoldProgress(progress, { stage: 'completed', status: 'completed' }, true);
 assert.equal(progress.children[1].children[0].style.transform, 'scaleX(1)');
 assert.equal(progress.children[0].children.length, 4);
-console.log('PROGRESS colorStages=true referenceStages=true completed=true');
+window.renderGoldProgress(progress, { mode: 'local-repair', stage: 'sharpening', status: 'processing' });
+assert.equal(progress.children[0].children.length, 4);
+assert.match(progress.children[2].textContent, /锐化/);
+window.renderGoldProgress(progress, { mode: 'ai-repair', stage: 'styling', status: 'processing',
+  detailCompleted: 2, detailTotal: 6, attemptCompleted: 1, attemptTotal: 2 });
+assert.equal(progress.children[0].children.length, 3);
+assert.match(progress.children[2].textContent, /AI 清晰重建/);
+assert.match(progress.children[2].textContent, /分块 2\/6/);
+assert.match(progress.children[2].textContent, /第 1\/2 次尝试/);
+console.log('PROGRESS colorStages=true referenceStages=true repairStages=true tiles=true attempt=true completed=true');

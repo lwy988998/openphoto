@@ -98,14 +98,16 @@ try {
   assert.match(appScript, /class="cardError" role="alert"/);
   assert.equal((studio.match(/data-preset-category=/g) || []).length, 6);
   assert.equal((studio.match(/data-preset-panel=/g) || []).length, 6);
-  assert.equal((studio.match(/data-preset="/g) || []).length, 61);
+  assert.equal((studio.match(/data-preset="/g) || []).length, 60);
+  assert.match(studio, /href="\/repair\.html"/);
+  assert.doesNotMatch(studio, /data-preset="repair4k"/);
   assert.match(studio, /data-preset-category="tension">情绪张力/);
   assert.match(studio, /data-preset="apertureSnapshot">大光圈抓拍/);
   const preservation = appScript.match(/const preservationFramework = `([^`]*)`;/)?.[1] || '';
   const finish = appScript.match(/const professionalFinish = `([^`]*)`;/)?.[1] || '';
   const presetMap = new Map([...appScript.matchAll(/^  ([A-Za-z][A-Za-z0-9]*): `([^`]*)`,/gm)].map(match => [match[1], match[2]]));
   const presetTexts = [...presetMap.values()].map(value => `${preservation}\n${value}\n${finish}`);
-  assert.equal(presetTexts.length, 61);
+  assert.equal(presetTexts.length, 60);
   assert.ok(presetTexts.every(prompt => prompt.length >= 90));
   const buttonKeys = [...studio.matchAll(/data-preset="([A-Za-z][A-Za-z0-9]*)"/g)].map(match => match[1]);
   assert.deepEqual(new Set(buttonKeys), new Set(presetMap.keys()));
@@ -141,10 +143,9 @@ try {
   assert.match(upstreamBodies[0], /<处理要求>自然调色<\/处理要求>/);
 
   assert.equal(upstreamCalls, 1);
-  assert.match(studio, /data-preset="repair4k">4K修复/);
-  assert.match(appScript, /保真型照片修复和超分辨率任务/);
-  assert.match(appScript, /2× 或 4× 超分辨率/);
-  assert.match(appScript, /不把压缩噪声锐化成纹理/);
+  assert.doesNotMatch(appScript, /保真型照片修复和超分辨率任务/);
+  assert.doesNotMatch(appScript, /2× 或 4× 超分辨率/);
+  assert.doesNotMatch(appScript, /不把压缩噪声锐化成纹理/);
   assert.doesNotMatch(studio, /id="upscale4k"|upscale8k|AI 高清细节增强/);
   assert.doesNotMatch(referencePage, /4K|8K|upscale/i);
   console.log('SMOKE public=true idempotent=true mapped=true promptLocked=true colorOnly=true');

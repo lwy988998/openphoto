@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>4K 补偿 · Openphoto</title>
+  <link rel="stylesheet" href="/styles.css?v=20260920-ai-repair" />
+  <link rel="stylesheet" href="/reference.css?v=20260920-ai-repair" />
+  <link rel="stylesheet" href="/repair.css?v=20260920-ai-repair" />
+</head>
+<body class="studioPage referencePage repairPage">
+  <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
+  <main class="studioShell">
+    <nav class="studioBar glass hairline">
+      <a class="backLink" href="/studio.html">← 返回多图工作台</a>
+      <h1>4K 补偿</h1>
+      <span class="status" id="status">服务已就绪</span>
+    </nav>
+    <div class="studioLayout">
+      <form id="repairForm" class="settings glass hairline">
+        <div class="sectionHeading"><div><span class="step">01</span><h2>上传与调整</h2></div><button id="clearRepair" type="button" class="secondaryButton">清空</button></div>
+        <fieldset class="repairModes"><legend>选择处理方式</legend>
+          <label><input type="radio" name="mode" value="local" checked /><strong>保真降噪锐化</strong><small>原片尺寸、色彩与内容；可调强度</small></label>
+          <label><input type="radio" name="mode" value="ai" /><strong>AI 分块清晰重建</strong><small>6 个重叠分块串行处理；原片色彩与尺寸，清晰度优先</small></label>
+        </fieldset>
+        <p id="modeHint" class="referenceHint">基于 Sharp / libvips 处理原片已有像素；严重失焦的信息不能凭空找回。</p>
+        <label class="drop" for="sourceInput"><input id="sourceInput" type="file" accept="image/png,image/jpeg,image/webp" /><span class="dropIcon">◇</span><strong>上传一张原图</strong><small>PNG / JPG / WEBP · 最多 20 MB · 刷新后恢复</small><span id="sourceName" class="selectedName">尚未选择</span></label>
+        <div id="localControls"><label class="strengthControl" for="denoise"><span>降噪强度 <output id="denoiseValue">30</output></span><input id="denoise" type="range" min="0" max="100" value="30" /><small>减少平坦区域噪点，尽量保护真实纹理。</small></label>
+        <label class="strengthControl" for="sharpen"><span>锐化强度 <output id="sharpenValue">25</output></span><input id="sharpen" type="range" min="0" max="100" value="25" /><small>只沿已有结构适度增强，不以增加文件体积冒充解析力。</small></label></div>
+        <button id="repairSubmit" class="submitButton" type="submit"><span>开始保真修复</span><small>原片尺寸</small></button>
+        <div id="goldProgress" class="goldProgress glass" aria-live="polite" hidden></div>
+        <p id="message" class="message" aria-live="polite"></p>
+      </form>
+      <section class="resultsSection">
+        <div class="sectionHeading"><div><span class="step">02</span><h2>原图与修复结果</h2></div><span id="jobStatus" class="status">等待上传</span></div>
+        <div class="referencePreviews">
+          <div class="imagePane glass"><span class="imageLabel">原图 · 色彩基准</span><div class="referenceViewport" id="sourceViewport"><img id="sourcePreview" alt="原图预览" hidden /><span id="sourcePlaceholder">等待原图</span></div></div>
+          <div class="imagePane glass"><span id="resultLabel" class="imageLabel">保真结果 · 原片尺寸</span><div class="referenceViewport" id="resultViewport"><img id="resultPreview" alt="修复结果预览" hidden /><span id="resultPlaceholder">修复完成后显示</span></div></div>
+        </div>
+        <div class="referenceActions"><button id="zoomToggle" type="button" class="secondaryButton">查看 100% 像素</button><a id="downloadPng" class="cardButton primary" aria-disabled="true">下载 PNG</a><a id="downloadJpeg" class="cardButton" aria-disabled="true">下载 JPG</a><button id="reprocess" type="button" class="secondaryButton" disabled>重新处理</button></div>
+        <p id="resultInfo" class="referenceHint" aria-live="polite"></p>
+      </section>
+    </div>
+  </main>
+  <dialog id="clearDialog" class="confirmDialog"><form method="dialog" class="glass"><span class="dialogMark">◇</span><h2>清空修复记录？</h2><p>这会移除本浏览器保存的原图、结果和任务记录。</p><div class="dialogActions"><button class="secondaryButton" value="cancel">取消</button><button class="dialogConfirm" value="confirm">确认清空</button></div></form></dialog>
+  <script src="/progress.js?v=20260925-luminance-tiles"></script><script src="/repair.js?v=20260925-luminance-tiles"></script>
+</body>
+</html>
